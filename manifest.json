@@ -1,7 +1,7 @@
 {
   "id": "gemini-link-summarizer",
   "name": "Gemini Link Summarizer",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "minAppVersion": "1.5.0",
   "description": "Right-click links in the editor and summarize them with Gemini URL Context.",
   "author": "Laroy",
