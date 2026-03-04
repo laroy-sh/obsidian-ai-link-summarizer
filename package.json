@@ -1,6 +1,6 @@
 {
   "name": "ai-link-summarizer",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Obsidian community plugin to summarize links with Gemini or OpenAI.",
   "main": "main.js",
   "scripts": {
