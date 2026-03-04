@@ -6,6 +6,7 @@ interface GeminiLinkSummarizerSettings {
   modelName: string;
   customPrompt: string;
   includeTimestamp: boolean;
+  summaryLengthChars: number;
 }
 
 interface UrlTarget {
@@ -17,16 +18,25 @@ const DEFAULT_SETTINGS: GeminiLinkSummarizerSettings = {
   apiKey: "",
   modelName: "gemini-2.5-flash",
   customPrompt: "",
-  includeTimestamp: false
+  includeTimestamp: false,
+  summaryLengthChars: 300
 };
-
-const DEFAULT_SUMMARY_PROMPT =
-  "Use URL Context to read the provided URL, then write one plain-text summary between 200 and 500 characters. Focus on the key point and important details. Do not use bullet points.";
 
 const MENU_TITLE = "Summarize via Gemini";
 const NOTICE_PREFIX = "Gemini link summarizer";
 const UNREADABLE_PAGE_ERROR = "UNREADABLE_PAGE";
 const EMPTY_SUMMARY_ERROR = "EMPTY_SUMMARY";
+const MIN_SUMMARY_LENGTH_CHARS = 120;
+const MAX_SUMMARY_LENGTH_CHARS = 1200;
+const FLASH_MODEL_PRESETS = ["gemini-3.1-flash-lite-preview", "gemini-3.0-flash-preview"] as const;
+
+function clampSummaryLengthChars(value: number): number {
+  if (!Number.isFinite(value)) {
+    return DEFAULT_SETTINGS.summaryLengthChars;
+  }
+
+  return Math.min(MAX_SUMMARY_LENGTH_CHARS, Math.max(MIN_SUMMARY_LENGTH_CHARS, Math.round(value)));
+}
 
 export default class GeminiLinkSummarizerPlugin extends Plugin {
   settings: GeminiLinkSummarizerSettings = DEFAULT_SETTINGS;
@@ -53,6 +63,8 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
 
   async loadSettings(): Promise<void> {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    this.settings.summaryLengthChars = clampSummaryLengthChars(this.settings.summaryLengthChars);
+    this.settings.modelName = this.settings.modelName.trim() || DEFAULT_SETTINGS.modelName;
   }
 
   async saveSettings(): Promise<void> {
@@ -221,8 +233,7 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
   private async requestGeminiSummary(url: string): Promise<string> {
     const ai = new GoogleGenAI({ apiKey: this.settings.apiKey.trim() });
     const model = this.settings.modelName.trim() || DEFAULT_SETTINGS.modelName;
-    const userPrompt = this.settings.customPrompt.trim() || DEFAULT_SUMMARY_PROMPT;
-    const prompt = `${userPrompt}\n\nURL: ${url}`;
+    const prompt = this.buildSummaryPrompt(url);
 
     const response = await ai.models.generateContent({
       model,
@@ -242,11 +253,54 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
       throw new Error(UNREADABLE_PAGE_ERROR);
     }
 
-    if (normalized.length > 500) {
-      return `${normalized.slice(0, 497).trimEnd()}...`;
+    return this.fitSummaryLength(normalized);
+  }
+
+  private buildSummaryPrompt(url: string): string {
+    const customPrompt = this.settings.customPrompt.trim();
+    const target = clampSummaryLengthChars(this.settings.summaryLengthChars);
+    const margin = Math.max(40, Math.round(target * 0.2));
+    const minLength = Math.max(MIN_SUMMARY_LENGTH_CHARS, target - margin);
+    const maxLength = Math.min(MAX_SUMMARY_LENGTH_CHARS, target + margin);
+    const basePrompt =
+      customPrompt.length > 0
+        ? customPrompt
+        : "Use URL Context to read the provided URL and summarize the page.";
+    const constraints = [
+      "Write exactly one plain-text paragraph.",
+      `Target length is about ${target} characters (aim for ${minLength} to ${maxLength}).`,
+      "End at a full sentence boundary and do not cut off in the middle of a sentence.",
+      "Do not use bullet points."
+    ].join(" ");
+
+    return `${basePrompt}\n\nAdditional requirements: ${constraints}\n\nURL: ${url}`;
+  }
+
+  private fitSummaryLength(summary: string): string {
+    const target = clampSummaryLengthChars(this.settings.summaryLengthChars);
+    const maxLength = Math.min(MAX_SUMMARY_LENGTH_CHARS, target + Math.max(60, Math.round(target * 0.25)));
+    if (summary.length <= maxLength) {
+      return summary;
     }
 
-    return normalized;
+    const candidate = summary.slice(0, maxLength);
+    const sentenceBoundaryIndex = this.findLastSentenceBoundaryIndex(candidate);
+    if (sentenceBoundaryIndex > Math.round(target * 0.6)) {
+      return candidate.slice(0, sentenceBoundaryIndex).trim();
+    }
+
+    return summary;
+  }
+
+  private findLastSentenceBoundaryIndex(text: string): number {
+    let boundaryIndex = -1;
+    const sentenceBoundaryRegex = /[.!?](?=\s|$)/g;
+    let match = sentenceBoundaryRegex.exec(text);
+    while (match) {
+      boundaryIndex = match.index + 1;
+      match = sentenceBoundaryRegex.exec(text);
+    }
+    return boundaryIndex;
   }
 
   private extractResponseText(response: unknown): string {
@@ -341,12 +395,48 @@ class GeminiLinkSummarizerSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Model name")
-      .setDesc("Gemini model to use.")
+      .setDesc("Gemini model to use. You can type any model name.")
       .addText((text) =>
         text
           .setValue(this.plugin.settings.modelName)
           .onChange(async (value) => {
             this.plugin.settings.modelName = value.trim() || DEFAULT_SETTINGS.modelName;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Flash model presets")
+      .setDesc("Quickly choose a recent Flash preview model.")
+      .addButton((button) =>
+        button.setButtonText("3.1 flash lite preview").onClick(async () => {
+          this.plugin.settings.modelName = FLASH_MODEL_PRESETS[0];
+          await this.plugin.saveSettings();
+          this.display();
+        })
+      )
+      .addButton((button) =>
+        button.setButtonText("3.0 flash preview").onClick(async () => {
+          this.plugin.settings.modelName = FLASH_MODEL_PRESETS[1];
+          await this.plugin.saveSettings();
+          this.display();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName("Summary length (characters)")
+      .setDesc(`Target length for the summary paragraph (${MIN_SUMMARY_LENGTH_CHARS}-${MAX_SUMMARY_LENGTH_CHARS}).`)
+      .addText((text) =>
+        text
+          .setPlaceholder(String(DEFAULT_SETTINGS.summaryLengthChars))
+          .setValue(String(this.plugin.settings.summaryLengthChars))
+          .onChange(async (value) => {
+            const parsed = Number.parseInt(value, 10);
+            if (Number.isNaN(parsed)) {
+              return;
+            }
+
+            this.plugin.settings.summaryLengthChars = clampSummaryLengthChars(parsed);
             await this.plugin.saveSettings();
           })
       );
