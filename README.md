@@ -51,6 +51,24 @@ The plugin sends the URL to your selected provider (Gemini or OpenAI), then inse
    npm run dev
    ```
 
+## Pre-submit Checklist
+
+Run this before tagging a release or updating your Obsidian Community Plugins PR:
+
+```bash
+npm run preflight
+```
+
+This runs:
+
+- Type check (`npm run check`)
+- Obsidian lint guardrails (`npm run lint:obsidian`)
+- Production build (`npm run build`)
+
+If your submission PR in `obsidianmd/obsidian-releases` references this plugin, keep the PR body **Repo URL** aligned with the current repository:
+
+- `https://github.com/laroy-sh/obsidian-ai-link-summarizer`
+
 ## Install In Obsidian
 
 1. Build the plugin so `main.js` exists.

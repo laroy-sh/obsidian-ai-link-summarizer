@@ -6,7 +6,9 @@
   "scripts": {
     "build": "node esbuild.config.mjs production",
     "dev": "node esbuild.config.mjs",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "lint:obsidian": "eslint -c eslint.config.mjs --max-warnings 0 main.ts manifest.json",
+    "preflight": "npm run check && npm run lint:obsidian && npm run build"
   },
   "keywords": [
     "obsidian",
@@ -22,8 +24,12 @@
     "openai": "^6.25.0"
   },
   "devDependencies": {
+    "@eslint/json": "^0.14.0",
     "@types/node": "^24.0.0",
+    "@typescript-eslint/parser": "^8.56.1",
     "esbuild": "^0.25.0",
+    "eslint": "^9.39.3",
+    "eslint-plugin-obsidianmd": "^0.1.9",
     "obsidian": "latest",
     "typescript": "^5.8.0"
   }
