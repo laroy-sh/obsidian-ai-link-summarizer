@@ -702,7 +702,7 @@ class GeminiLinkSummarizerSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
-    new Setting(containerEl).setName("AI link summarizer").setHeading();
+    new Setting(containerEl).setName("General").setHeading();
 
     new Setting(containerEl)
       .setName("Provider")
@@ -710,7 +710,7 @@ class GeminiLinkSummarizerSettingTab extends PluginSettingTab {
       .addDropdown((dropdown) =>
         dropdown
           .addOption("gemini", "Gemini")
-          .addOption("openai", "OpenAI")
+          .addOption("openai", "Openai")
           .setValue(this.plugin.settings.provider)
           .onChange(async (value) => {
             this.plugin.settings.provider = value === "openai" ? "openai" : "gemini";
@@ -719,19 +719,19 @@ class GeminiLinkSummarizerSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName("Stored API keys")
+      .setName("Stored keys")
       .setDesc("Stored locally in Obsidian plugin data; not encrypted by this plugin.")
       .addButton((button) =>
         button
           .setWarning()
-          .setButtonText("Clear stored API keys")
+          .setButtonText("Clear stored keys")
           .onClick(async () => {
             await this.plugin.clearStoredApiKeys();
             this.display();
           })
       );
 
-    new Setting(containerEl).setName("Summary settings").setHeading();
+    new Setting(containerEl).setName("Summary").setHeading();
 
     new Setting(containerEl)
       .setName("Summary length range (characters)")
@@ -773,7 +773,7 @@ class GeminiLinkSummarizerSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName("Allow private-network URLs (advanced)")
+      .setName("Allow private-network links (advanced)")
       .setDesc("Off by default to prevent requests to localhost, *.local, and private IP ranges.")
       .addToggle((toggle) =>
         toggle.setValue(this.plugin.settings.allowPrivateNetworkUrls).onChange(async (value) => {
@@ -800,11 +800,11 @@ class GeminiLinkSummarizerSettingTab extends PluginSettingTab {
           })
       );
 
-    new Setting(containerEl).setName("Gemini settings").setHeading();
+    new Setting(containerEl).setName("Gemini").setHeading();
 
     new Setting(containerEl)
       .setName("Gemini API key")
-      .setDesc("API key used for Gemini requests. Stored locally in Obsidian plugin data; not encrypted by this plugin.")
+      .setDesc("Key used for Gemini requests. Stored locally in Obsidian plugin data; not encrypted by this plugin.")
       .addText((text) =>
         text
           .setValue(this.plugin.settings.geminiApiKey)
@@ -828,7 +828,7 @@ class GeminiLinkSummarizerSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Flash model presets")
-      .setDesc("Quickly choose a recent Flash preview model.")
+      .setDesc("Quickly choose a recent flash preview model.")
       .addButton((button) =>
         button.setButtonText("3.1 flash lite preview").onClick(async () => {
           this.plugin.settings.geminiModelName = FLASH_MODEL_PRESETS[0];
@@ -844,11 +844,11 @@ class GeminiLinkSummarizerSettingTab extends PluginSettingTab {
         })
       );
 
-    new Setting(containerEl).setName("OpenAI settings").setHeading();
+    new Setting(containerEl).setName("Openai").setHeading();
 
     new Setting(containerEl)
-      .setName("OpenAI API key")
-      .setDesc("API key used for OpenAI requests. Stored locally in Obsidian plugin data; not encrypted by this plugin.")
+      .setName("Openai key")
+      .setDesc("Key used for Openai requests. Stored locally in Obsidian plugin data; not encrypted by this plugin.")
       .addText((text) =>
         text.setValue(this.plugin.settings.openaiApiKey).onChange(async (value) => {
           this.plugin.settings.openaiApiKey = value.trim();
@@ -857,8 +857,8 @@ class GeminiLinkSummarizerSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName("OpenAI model name")
-      .setDesc("OpenAI model to use. You can type any model name.")
+      .setName("Openai model")
+      .setDesc("Openai model to use. You can type any model name.")
       .addText((text) =>
         text.setValue(this.plugin.settings.openaiModelName).onChange(async (value) => {
           this.plugin.settings.openaiModelName = value.trim() || DEFAULT_SETTINGS.openaiModelName;
@@ -867,17 +867,17 @@ class GeminiLinkSummarizerSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName("OpenAI model presets")
-      .setDesc("Quickly choose a common OpenAI model.")
+      .setName("Openai model presets")
+      .setDesc("Quickly choose a common Openai model.")
       .addButton((button) =>
-        button.setButtonText("gpt-5.3-chat-latest").onClick(async () => {
+        button.setButtonText("Use gpt-5.3-chat-latest").onClick(async () => {
           this.plugin.settings.openaiModelName = OPENAI_MODEL_PRESETS[0];
           await this.plugin.saveSettings();
           this.display();
         })
       )
       .addButton((button) =>
-        button.setButtonText("gpt-5.2").onClick(async () => {
+        button.setButtonText("Use gpt-5.2").onClick(async () => {
           this.plugin.settings.openaiModelName = OPENAI_MODEL_PRESETS[1];
           await this.plugin.saveSettings();
           this.display();
