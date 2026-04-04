@@ -77,9 +77,7 @@ If your submission PR in `obsidianmd/obsidian-releases` references this plugin, 
    - `main.js`
    - `styles.css` (empty here, but included for compatibility)
 3. Target folder:
-   - `<your-vault>/.obsidian/plugins/gemini-link-summarizer/`
-
-Note: the folder/id is still `gemini-link-summarizer` for upgrade compatibility with existing installs.
+   - `<your-vault>/.obsidian/plugins/ai-link-summarizer/`
 
 4. In Obsidian:
    - **Settings -> Community plugins**
@@ -116,27 +114,27 @@ The plugin extracts a URL from the selection or link under cursor. If found, it 
 
 ## Releases (GitHub Actions)
 
-Pushing a version tag like `0.2.1` triggers a workflow that runs a security audit, builds the plugin, and uploads release assets:
+Pushing a version tag like `0.3.0` triggers a workflow that runs a security audit, builds the plugin, and uploads release assets:
 
 - `main.js`
 - `manifest.json`
 - `versions.json`
 - `styles.css`
-- `obsidian-ai-link-summarizer-0.2.1.zip`
+- `obsidian-ai-link-summarizer-0.3.0.zip`
 
 To publish:
 
 ```bash
-git tag 0.2.1
-git push origin 0.2.1
+git tag 0.3.0
+git push origin 0.3.0
 ```
 
 ## Install From GitHub Release
 
 1. Open the GitHub Release for your version tag.
 2. Download either:
-   - the zip (`obsidian-ai-link-summarizer-0.2.1.zip`), or
+   - the zip (`obsidian-ai-link-summarizer-0.3.0.zip`), or
    - the individual files (`main.js`, `manifest.json`, `styles.css`, `versions.json`)
 3. Extract/copy into:
-   - `<your-vault>/.obsidian/plugins/gemini-link-summarizer/`
+   - `<your-vault>/.obsidian/plugins/ai-link-summarizer/`
 4. Reload/enable the plugin in Obsidian.
