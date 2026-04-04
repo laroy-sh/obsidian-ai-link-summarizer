@@ -106,7 +106,7 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
     await this.loadSettings();
     this.addSettingTab(new GeminiLinkSummarizerSettingTab(this.app, this));
     this.addCommand({
-      id: "ai-link-summarizer.clear-api-keys",
+      id: "clear-api-keys",
       name: "Clear stored API keys",
       callback: async () => {
         await this.clearStoredApiKeys();
