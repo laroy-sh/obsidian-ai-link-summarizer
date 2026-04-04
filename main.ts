@@ -55,7 +55,7 @@ const MIN_REQUEST_TIMEOUT_MS = 5000;
 const MAX_REQUEST_TIMEOUT_MS = 120000;
 const MAX_PROVIDER_OUTPUT_TOKENS = 700;
 const HARD_SUMMARY_CHAR_CAP = 4000;
-const FLASH_MODEL_PRESETS = ["gemini-3.1-flash-lite-preview", "gemini-3.0-flash-preview"] as const;
+const FLASH_MODEL_PRESETS = ["gemini-3.1-flash-lite-preview", "gemini-3-flash-preview"] as const;
 const OPENAI_MODEL_PRESETS = ["gpt-5.3-chat-latest", "gpt-5.2"] as const;
 
 function clampSummaryLengthChars(value: number): number {
@@ -130,7 +130,7 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
   }
 
   async loadSettings(): Promise<void> {
-    const loaded = (await this.loadData()) as Partial<GeminiLinkSummarizerSettings> & LegacySettings;
+    const loaded = ((await this.loadData()) ?? {}) as Partial<GeminiLinkSummarizerSettings> & LegacySettings;
     this.settings = Object.assign({}, DEFAULT_SETTINGS, loaded);
     if (!this.settings.geminiApiKey && typeof loaded.apiKey === "string") {
       this.settings.geminiApiKey = loaded.apiKey;
@@ -836,7 +836,7 @@ class GeminiLinkSummarizerSettingTab extends PluginSettingTab {
         })
       )
       .addButton((button) =>
-        button.setButtonText("3.0 flash preview").onClick(async () => {
+        button.setButtonText("3 flash preview").onClick(async () => {
           this.plugin.settings.geminiModelName = FLASH_MODEL_PRESETS[1];
           await this.plugin.saveSettings();
           this.display();
