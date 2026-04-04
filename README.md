@@ -24,7 +24,7 @@ The plugin sends the URL to your selected provider (Gemini or OpenAI), then inse
   - Summary length range (characters), format like `200-600` (minimum `200`)
   - Private-network URL policy toggle (advanced)
   - Request timeout (ms), range `5000-120000`
-  - One-click clear stored API keys (and command: `ai-link-summarizer.clear-api-keys`)
+  - One-click clear stored API keys (and command: `clear-api-keys`)
   - Custom prompt (optional)
   - Include timestamp
 - Notices + clean errors for:
