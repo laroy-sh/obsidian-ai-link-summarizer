@@ -1,8 +1,9 @@
 import { App, Editor, EditorPosition, MarkdownView, Notice, Plugin, PluginSettingTab, Setting } from "obsidian";
 import { GoogleGenAI } from "@google/genai";
 import OpenAI from "openai";
+import Anthropic from "@anthropic-ai/sdk";
 
-type SummaryProvider = "gemini" | "openai";
+type SummaryProvider = "gemini" | "openai" | "claude";
 
 interface GeminiLinkSummarizerSettings {
   provider: SummaryProvider;
@@ -10,6 +11,8 @@ interface GeminiLinkSummarizerSettings {
   geminiModelName: string;
   openaiApiKey: string;
   openaiModelName: string;
+  claudeApiKey: string;
+  claudeModelName: string;
   customPrompt: string;
   includeTimestamp: boolean;
   summaryMinChars: number;
@@ -35,6 +38,8 @@ const DEFAULT_SETTINGS: GeminiLinkSummarizerSettings = {
   geminiModelName: "gemini-3.1-flash-lite-preview",
   openaiApiKey: "",
   openaiModelName: "gpt-5.3-chat-latest",
+  claudeApiKey: "",
+  claudeModelName: "claude-sonnet-4-6",
   customPrompt: "",
   includeTimestamp: false,
   summaryMinChars: 200,
@@ -56,7 +61,8 @@ const MAX_REQUEST_TIMEOUT_MS = 120000;
 const MAX_PROVIDER_OUTPUT_TOKENS = 700;
 const HARD_SUMMARY_CHAR_CAP = 4000;
 const FLASH_MODEL_PRESETS = ["gemini-3.1-flash-lite-preview", "gemini-3-flash-preview"] as const;
-const OPENAI_MODEL_PRESETS = ["gpt-5.3-chat-latest", "gpt-5.2"] as const;
+const OPENAI_MODEL_PRESETS = ["gpt-5.4-mini", "gpt-5.3-chat-latest"] as const;
+const CLAUDE_MODEL_PRESETS = ["claude-sonnet-4-6", "claude-haiku-4-5-20251001"] as const;
 
 function clampSummaryLengthChars(value: number): number {
   if (!Number.isFinite(value)) {
@@ -147,11 +153,15 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
     const normalizedRange = normalizeSummaryRange(this.settings.summaryMinChars, this.settings.summaryMaxChars);
     this.settings.summaryMinChars = normalizedRange.min;
     this.settings.summaryMaxChars = normalizedRange.max;
-    this.settings.provider = this.settings.provider === "openai" ? "openai" : "gemini";
+    this.settings.provider = (["openai", "claude"] as string[]).includes(this.settings.provider)
+      ? this.settings.provider
+      : "gemini";
     this.settings.geminiModelName = this.settings.geminiModelName.trim() || DEFAULT_SETTINGS.geminiModelName;
     this.settings.openaiModelName = this.settings.openaiModelName.trim() || DEFAULT_SETTINGS.openaiModelName;
+    this.settings.claudeModelName = (this.settings.claudeModelName ?? "").trim() || DEFAULT_SETTINGS.claudeModelName;
     this.settings.geminiApiKey = this.settings.geminiApiKey.trim();
     this.settings.openaiApiKey = this.settings.openaiApiKey.trim();
+    this.settings.claudeApiKey = (this.settings.claudeApiKey ?? "").trim();
     this.settings.allowPrivateNetworkUrls = Boolean(this.settings.allowPrivateNetworkUrls);
     this.settings.requestTimeoutMs = clampRequestTimeoutMs(this.settings.requestTimeoutMs);
   }
@@ -163,6 +173,7 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
   async clearStoredApiKeys(showNotice = true): Promise<void> {
     this.settings.geminiApiKey = "";
     this.settings.openaiApiKey = "";
+    this.settings.claudeApiKey = "";
     await this.saveSettings();
     if (showNotice) {
       new Notice(`${NOTICE_PREFIX}: stored API keys cleared.`);
@@ -407,11 +418,15 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
   }
 
   private getActiveProviderLabel(): string {
-    return this.settings.provider === "openai" ? "OpenAI" : "Gemini";
+    if (this.settings.provider === "openai") return "OpenAI";
+    if (this.settings.provider === "claude") return "Claude";
+    return "Gemini";
   }
 
   private getActiveApiKey(): string {
-    return this.settings.provider === "openai" ? this.settings.openaiApiKey.trim() : this.settings.geminiApiKey.trim();
+    if (this.settings.provider === "openai") return this.settings.openaiApiKey.trim();
+    if (this.settings.provider === "claude") return this.settings.claudeApiKey.trim();
+    return this.settings.geminiApiKey.trim();
   }
 
   private getSummaryRange(): { min: number; max: number } {
@@ -446,7 +461,9 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
   }
 
   private async requestSummary(url: string): Promise<string> {
-    return this.settings.provider === "openai" ? this.requestOpenAiSummary(url) : this.requestGeminiSummary(url);
+    if (this.settings.provider === "claude") return this.requestClaudeSummary(url);
+    if (this.settings.provider === "openai") return this.requestOpenAiSummary(url);
+    return this.requestGeminiSummary(url);
   }
 
   private async requestGeminiSummary(url: string): Promise<string> {
@@ -522,6 +539,56 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
     return this.fitSummaryLength(normalized);
   }
 
+  private async requestClaudeSummary(url: string): Promise<string> {
+    const client = new Anthropic({
+      apiKey: this.settings.claudeApiKey.trim(),
+      dangerouslyAllowBrowser: true
+    });
+    const model = this.settings.claudeModelName.trim() || DEFAULT_SETTINGS.claudeModelName;
+    const prompt = this.buildClaudePrompt(url);
+
+    const response = await this.runWithTimeout(async (signal) => {
+      return await client.messages.create(
+        {
+          model,
+          max_tokens: MAX_PROVIDER_OUTPUT_TOKENS,
+          tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 1 } as never],
+          messages: [{ role: "user", content: prompt }]
+        },
+        { signal }
+      );
+    });
+
+    const outputText = this.extractClaudeResponseText(response);
+    if (!outputText) {
+      throw new Error(EMPTY_SUMMARY_ERROR);
+    }
+
+    const normalized = outputText.replace(/\s+/g, " ").trim();
+    if (!normalized) {
+      throw new Error(UNREADABLE_PAGE_ERROR);
+    }
+
+    return this.fitSummaryLength(normalized);
+  }
+
+  private extractClaudeResponseText(response: unknown): string {
+    const responseObj = response as Record<string, unknown>;
+    const content = responseObj.content;
+    if (!Array.isArray(content)) {
+      return "";
+    }
+
+    return content
+      .filter((block) => {
+        const b = block as Record<string, unknown>;
+        return b.type === "text" && typeof b.text === "string";
+      })
+      .map((block) => (block as Record<string, unknown>).text as string)
+      .join("\n")
+      .trim();
+  }
+
   private buildSummaryPrompt(url: string): string {
     const customPrompt = this.settings.customPrompt.trim();
     const { min: minLength, max: maxLength } = this.getSummaryRange();
@@ -541,6 +608,11 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
   }
 
   private buildOpenAiPrompt(url: string): string {
+    const core = this.buildSummaryPrompt(url);
+    return `Use the web search tool to fetch and read this exact URL, then answer.\n${core}`;
+  }
+
+  private buildClaudePrompt(url: string): string {
     const core = this.buildSummaryPrompt(url);
     return `Use the web search tool to fetch and read this exact URL, then answer.\n${core}`;
   }
@@ -710,9 +782,12 @@ class GeminiLinkSummarizerSettingTab extends PluginSettingTab {
         dropdown
           .addOption("gemini", "Gemini")
           .addOption("openai", "Openai")
+          .addOption("claude", "Claude")
           .setValue(this.plugin.settings.provider)
           .onChange(async (value) => {
-            this.plugin.settings.provider = value === "openai" ? "openai" : "gemini";
+            this.plugin.settings.provider = (["openai", "claude"] as string[]).includes(value)
+              ? (value as SummaryProvider)
+              : "gemini";
             await this.plugin.saveSettings();
           })
       );
@@ -869,15 +944,55 @@ class GeminiLinkSummarizerSettingTab extends PluginSettingTab {
       .setName("Openai model presets")
       .setDesc("Quickly choose a common openai model.")
       .addButton((button) =>
-        button.setButtonText("Use gpt-5.3-chat-latest").onClick(async () => {
+        button.setButtonText("Use gpt-5.4-mini").onClick(async () => {
           this.plugin.settings.openaiModelName = OPENAI_MODEL_PRESETS[0];
           await this.plugin.saveSettings();
           this.display();
         })
       )
       .addButton((button) =>
-        button.setButtonText("Use gpt-5.2").onClick(async () => {
+        button.setButtonText("Use gpt-5.3-chat-latest").onClick(async () => {
           this.plugin.settings.openaiModelName = OPENAI_MODEL_PRESETS[1];
+          await this.plugin.saveSettings();
+          this.display();
+        })
+      );
+
+    new Setting(containerEl).setName("Claude").setHeading();
+
+    new Setting(containerEl)
+      .setName("Claude API key")
+      .setDesc("Key used for claude requests. Stored locally in Obsidian plugin data; not encrypted by this plugin.")
+      .addText((text) =>
+        text.setValue(this.plugin.settings.claudeApiKey).onChange(async (value) => {
+          this.plugin.settings.claudeApiKey = value.trim();
+          await this.plugin.saveSettings();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName("Claude model")
+      .setDesc("Claude model to use. You can type any model name.")
+      .addText((text) =>
+        text.setValue(this.plugin.settings.claudeModelName).onChange(async (value) => {
+          this.plugin.settings.claudeModelName = value.trim() || DEFAULT_SETTINGS.claudeModelName;
+          await this.plugin.saveSettings();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName("Claude model presets")
+      .setDesc("Quickly choose a common claude model.")
+      .addButton((button) =>
+        button.setButtonText("Use claude-sonnet-4-6").onClick(async () => {
+          this.plugin.settings.claudeModelName = CLAUDE_MODEL_PRESETS[0];
+          await this.plugin.saveSettings();
+          this.display();
+        })
+      )
+      .addButton((button) =>
+        button.setButtonText("Use claude-haiku-4-5").onClick(async () => {
+          this.plugin.settings.claudeModelName = CLAUDE_MODEL_PRESETS[1];
           await this.plugin.saveSettings();
           this.display();
         })
