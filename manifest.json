@@ -3,7 +3,7 @@
   "name": "AI Link Summarizer",
   "version": "0.3.1",
   "minAppVersion": "1.5.0",
-  "description": "Right-click links in the editor and summarize them with Gemini or OpenAI.",
+  "description": "Right-click links in the editor and summarize them with Gemini, OpenAI, or Claude.",
   "author": "Laroy",
   "isDesktopOnly": false
 }
