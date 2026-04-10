@@ -1,7 +1,7 @@
 # AI Link Summarizer (Obsidian Community Plugin)
 
 Right-click a URL in the editor and run **Summarize link**.
-The plugin sends the URL to your selected provider (Gemini or OpenAI), then inserts a concise summary into the current note on a new line **before the detected link**.
+The plugin sends the URL to your selected provider (Gemini, OpenAI, or Claude), then inserts a concise summary into the current note on a new line **before the detected link**.
 
 ## Features
 
@@ -13,14 +13,17 @@ The plugin sends the URL to your selected provider (Gemini or OpenAI), then inse
 - Provider support:
   - Gemini via `@google/genai` + `urlContext`
   - OpenAI via `openai` + `web_search_preview`
+  - Claude via `@anthropic-ai/sdk` (fetches page content locally via `requestUrl`)
 - Inserts summary before the detected link (optional timestamp prefix)
 - Settings:
-  - Provider (Gemini/OpenAI)
-  - Separate settings blocks for Summary, Gemini, and OpenAI
+  - Provider (Gemini/OpenAI/Claude)
+  - Separate settings blocks for Summary, Gemini, OpenAI, and Claude
   - Gemini API key + model
   - OpenAI API key + model
-  - Gemini model presets: `gemini-3.1-flash-lite-preview`, `gemini-3.0-flash-preview`
-  - OpenAI model presets: `gpt-5.3-chat-latest`, `gpt-5.2`
+  - Claude API key + model
+  - Gemini model presets: `gemini-3.1-flash-lite-preview`, `gemini-3-flash-preview`
+  - OpenAI model presets: `gpt-5.4-mini`, `gpt-5.3-chat-latest`
+  - Claude model presets: `claude-sonnet-4-6`, `claude-haiku-4-5`
   - Summary length range (characters), format like `200-600` (minimum `200`)
   - Private-network URL policy toggle (advanced)
   - Request timeout (ms), range `5000-120000`
@@ -114,26 +117,26 @@ The plugin extracts a URL from the selection or link under cursor. If found, it 
 
 ## Releases (GitHub Actions)
 
-Pushing a version tag like `0.3.0` triggers a workflow that runs a security audit, builds the plugin, and uploads release assets:
+Pushing a version tag like `0.3.1` triggers a workflow that runs a security audit, builds the plugin, and uploads release assets:
 
 - `main.js`
 - `manifest.json`
 - `versions.json`
 - `styles.css`
-- `obsidian-ai-link-summarizer-0.3.0.zip`
+- `obsidian-ai-link-summarizer-0.3.1.zip`
 
 To publish:
 
 ```bash
-git tag 0.3.0
-git push origin 0.3.0
+git tag 0.3.1
+git push origin 0.3.1
 ```
 
 ## Install From GitHub Release
 
 1. Open the GitHub Release for your version tag.
 2. Download either:
-   - the zip (`obsidian-ai-link-summarizer-0.3.0.zip`), or
+   - the zip (`obsidian-ai-link-summarizer-0.3.1.zip`), or
    - the individual files (`main.js`, `manifest.json`, `styles.css`, `versions.json`)
 3. Extract/copy into:
    - `<your-vault>/.obsidian/plugins/ai-link-summarizer/`

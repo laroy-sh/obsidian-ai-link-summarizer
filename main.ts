@@ -1,7 +1,7 @@
-import { App, Editor, EditorPosition, MarkdownView, Notice, Plugin, PluginSettingTab, Setting } from "obsidian";
+import { App, Editor, EditorPosition, MarkdownView, Notice, Plugin, PluginSettingTab, Setting, requestUrl } from "obsidian";
 import { GoogleGenAI } from "@google/genai";
 import OpenAI from "openai";
-import Anthropic from "@anthropic-ai/sdk";
+import Anthropic, { APIError } from "@anthropic-ai/sdk";
 
 type SummaryProvider = "gemini" | "openai" | "claude";
 
@@ -217,6 +217,7 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
       editor.replaceRange(output, target.insertBefore);
       new Notice(`${NOTICE_PREFIX}: summary inserted.`);
     } catch (error: unknown) {
+      console.error("[ai-link-summarizer] request error:", error);
       new Notice(this.toNoticeMessage(error));
     }
   }
@@ -539,20 +540,41 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
     return this.fitSummaryLength(normalized);
   }
 
+  private async fetchPageText(url: string): Promise<string> {
+    const response = await requestUrl({ url, method: "GET", throw: false });
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(UNREADABLE_PAGE_ERROR);
+    }
+    const contentType = (response.headers["content-type"] ?? "").toLowerCase();
+    if (contentType.includes("text/html")) {
+      // Strip tags and collapse whitespace; keep at most 20 000 chars to stay within context
+      return response.text
+        .replace(/<script[\s\S]*?<\/script>/gi, " ")
+        .replace(/<style[\s\S]*?<\/style>/gi, " ")
+        .replace(/<[^>]+>/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 20000);
+    }
+    // Plain text / other
+    return response.text.slice(0, 20000);
+  }
+
   private async requestClaudeSummary(url: string): Promise<string> {
     const client = new Anthropic({
       apiKey: this.settings.claudeApiKey.trim(),
       dangerouslyAllowBrowser: true
     });
     const model = this.settings.claudeModelName.trim() || DEFAULT_SETTINGS.claudeModelName;
-    const prompt = this.buildClaudePrompt(url);
+
+    const pageText = await this.runWithTimeout(async () => this.fetchPageText(url));
+    const prompt = this.buildClaudePrompt(url, pageText);
 
     const response = await this.runWithTimeout(async (signal) => {
       return await client.messages.create(
         {
           model,
           max_tokens: MAX_PROVIDER_OUTPUT_TOKENS,
-          tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 1 } as never],
           messages: [{ role: "user", content: prompt }]
         },
         { signal }
@@ -612,9 +634,9 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
     return `Use the web search tool to fetch and read this exact URL, then answer.\n${core}`;
   }
 
-  private buildClaudePrompt(url: string): string {
+  private buildClaudePrompt(url: string, pageText: string): string {
     const core = this.buildSummaryPrompt(url);
-    return `Use the web search tool to fetch and read this exact URL, then answer.\n${core}`;
+    return `${core}\n\nPage content:\n${pageText}`;
   }
 
   private fitSummaryLength(summary: string): string {
@@ -743,6 +765,27 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
 
     if (message === UNREADABLE_PAGE_ERROR || message === EMPTY_SUMMARY_ERROR) {
       return `${NOTICE_PREFIX}: unsupported or unreadable page.`;
+    }
+
+    if (error instanceof APIError) {
+      if (error.status === 401) {
+        return `${NOTICE_PREFIX}: ${provider} request failed. Invalid API key.`;
+      }
+      if (error.status === 403) {
+        return `${NOTICE_PREFIX}: ${provider} request failed. API key lacks permission.`;
+      }
+      if (error.status === 400) {
+        if (lower.includes("credit balance") || lower.includes("billing")) {
+          return `${NOTICE_PREFIX}: ${provider} request failed. Insufficient API credits — add credits at console.anthropic.com.`;
+        }
+        return `${NOTICE_PREFIX}: ${provider} request failed. Bad request — check model name and settings (HTTP 400).`;
+      }
+      if (error.status === 429) {
+        return `${NOTICE_PREFIX}: ${provider} rate limit exceeded. Try again later.`;
+      }
+      if (error.status !== undefined && error.status >= 500) {
+        return `${NOTICE_PREFIX}: ${provider} server error (HTTP ${error.status}). Try again later.`;
+      }
     }
 
     if (lower.includes("api key") || lower.includes("unauth") || lower.includes("permission")) {
