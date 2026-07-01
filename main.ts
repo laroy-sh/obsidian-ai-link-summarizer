@@ -1,4 +1,4 @@
-import { App, Editor, EditorPosition, MarkdownView, Notice, Plugin, PluginSettingTab, Setting, requestUrl } from "obsidian";
+import { App, Editor, EditorPosition, MarkdownView, Notice, Plugin, PluginSettingTab, Setting, type SettingDefinitionItem, requestUrl } from "obsidian";
 import { GoogleGenAI } from "@google/genai";
 import OpenAI from "openai";
 import Anthropic, { APIError } from "@anthropic-ai/sdk";
@@ -814,231 +814,283 @@ class GeminiLinkSummarizerSettingTab extends PluginSettingTab {
     this.plugin = plugin;
   }
 
-  display(): void {
-    const { containerEl } = this;
-    containerEl.empty();
-
-    new Setting(containerEl)
-      .setName("Provider")
-      .setDesc("Select which provider to use for link summaries.")
-      .addDropdown((dropdown) =>
-        dropdown
-          .addOption("gemini", "Gemini")
-          .addOption("openai", "Openai")
-          .addOption("claude", "Claude")
-          .setValue(this.plugin.settings.provider)
-          .onChange(async (value) => {
-            this.plugin.settings.provider = (["openai", "claude"] as string[]).includes(value)
-              ? (value as SummaryProvider)
-              : "gemini";
-            await this.plugin.saveSettings();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Stored keys")
-      .setDesc("Stored locally in Obsidian plugin data; not encrypted by this plugin.")
-      .addButton((button) =>
-        button
-          .setDestructive()
-          .setButtonText("Clear stored keys")
-          .onClick(async () => {
-            await this.plugin.clearStoredApiKeys();
-            this.display();
-          })
-      );
-
-    new Setting(containerEl).setName("Summary").setHeading();
-
-    new Setting(containerEl)
-      .setName("Summary length range (characters)")
-      .setDesc(`Use the format min-max (for example 200-600). Minimum value is ${MIN_SUMMARY_LENGTH_CHARS}.`)
-      .addText((text) =>
-        text
-          .setPlaceholder(formatSummaryRange(DEFAULT_SETTINGS.summaryMinChars, DEFAULT_SETTINGS.summaryMaxChars))
-          .setValue(formatSummaryRange(this.plugin.settings.summaryMinChars, this.plugin.settings.summaryMaxChars))
-          .onChange(async (value) => {
-            const parsedRange = parseSummaryRangeInput(value);
-            if (!parsedRange) {
-              return;
+  getSettingDefinitions(): SettingDefinitionItem[] {
+    return [
+      {
+        type: "group",
+        items: [
+          {
+            name: "Provider",
+            desc: "Select which provider to use for link summaries.",
+            render: (setting) => {
+              setting.addDropdown((dropdown) =>
+                dropdown
+                  .addOption("gemini", "Gemini")
+                  .addOption("openai", "Openai")
+                  .addOption("claude", "Claude")
+                  .setValue(this.plugin.settings.provider)
+                  .onChange(async (value) => {
+                    this.plugin.settings.provider = (["openai", "claude"] as string[]).includes(value)
+                      ? (value as SummaryProvider)
+                      : "gemini";
+                    await this.plugin.saveSettings();
+                  })
+              );
             }
-
-            this.plugin.settings.summaryMinChars = parsedRange.min;
-            this.plugin.settings.summaryMaxChars = parsedRange.max;
-            await this.plugin.saveSettings();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Custom prompt (optional)")
-      .setDesc("Overrides the default summarization prompt.")
-      .addTextArea((textArea) =>
-        textArea.setValue(this.plugin.settings.customPrompt).onChange(async (value) => {
-          this.plugin.settings.customPrompt = value;
-          await this.plugin.saveSettings();
-        })
-      );
-
-    new Setting(containerEl)
-      .setName("Include timestamp")
-      .setDesc("Prepends the current timestamp before the inserted summary.")
-      .addToggle((toggle) =>
-        toggle.setValue(this.plugin.settings.includeTimestamp).onChange(async (value) => {
-          this.plugin.settings.includeTimestamp = value;
-          await this.plugin.saveSettings();
-        })
-      );
-
-    new Setting(containerEl)
-      .setName("Allow private-network links (advanced)")
-      .setDesc("Off by default to prevent requests to localhost, *.local, and private IP ranges.")
-      .addToggle((toggle) =>
-        toggle.setValue(this.plugin.settings.allowPrivateNetworkUrls).onChange(async (value) => {
-          this.plugin.settings.allowPrivateNetworkUrls = value;
-          await this.plugin.saveSettings();
-        })
-      );
-
-    new Setting(containerEl)
-      .setName("Request timeout (ms)")
-      .setDesc(`Timeout for provider requests (${MIN_REQUEST_TIMEOUT_MS}-${MAX_REQUEST_TIMEOUT_MS}).`)
-      .addText((text) =>
-        text
-          .setPlaceholder(String(DEFAULT_SETTINGS.requestTimeoutMs))
-          .setValue(String(this.plugin.settings.requestTimeoutMs))
-          .onChange(async (value) => {
-            const parsed = Number.parseInt(value, 10);
-            if (Number.isNaN(parsed)) {
-              return;
+          },
+          {
+            name: "Stored keys",
+            desc: "Stored locally in Obsidian plugin data; not encrypted by this plugin.",
+            render: (setting) => {
+              setting.addButton((button) =>
+                button
+                  .setDestructive()
+                  .setButtonText("Clear stored keys")
+                  .onClick(async () => {
+                    await this.plugin.clearStoredApiKeys();
+                    this.update();
+                  })
+              );
             }
+          }
+        ]
+      },
+      {
+        type: "group",
+        heading: "Summary",
+        items: [
+          {
+            name: "Summary length range (characters)",
+            desc: `Use the format min-max (for example 200-600). Minimum value is ${MIN_SUMMARY_LENGTH_CHARS}.`,
+            render: (setting) => {
+              setting.addText((text) =>
+                text
+                  .setPlaceholder(formatSummaryRange(DEFAULT_SETTINGS.summaryMinChars, DEFAULT_SETTINGS.summaryMaxChars))
+                  .setValue(formatSummaryRange(this.plugin.settings.summaryMinChars, this.plugin.settings.summaryMaxChars))
+                  .onChange(async (value) => {
+                    const parsedRange = parseSummaryRangeInput(value);
+                    if (!parsedRange) {
+                      return;
+                    }
 
-            this.plugin.settings.requestTimeoutMs = clampRequestTimeoutMs(parsed);
-            await this.plugin.saveSettings();
-          })
-      );
+                    this.plugin.settings.summaryMinChars = parsedRange.min;
+                    this.plugin.settings.summaryMaxChars = parsedRange.max;
+                    await this.plugin.saveSettings();
+                  })
+              );
+            }
+          },
+          {
+            name: "Custom prompt (optional)",
+            desc: "Overrides the default summarization prompt.",
+            render: (setting) => {
+              setting.addTextArea((textArea) =>
+                textArea.setValue(this.plugin.settings.customPrompt).onChange(async (value) => {
+                  this.plugin.settings.customPrompt = value;
+                  await this.plugin.saveSettings();
+                })
+              );
+            }
+          },
+          {
+            name: "Include timestamp",
+            desc: "Prepends the current timestamp before the inserted summary.",
+            render: (setting) => {
+              setting.addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.includeTimestamp).onChange(async (value) => {
+                  this.plugin.settings.includeTimestamp = value;
+                  await this.plugin.saveSettings();
+                })
+              );
+            }
+          },
+          {
+            name: "Allow private-network links (advanced)",
+            desc: "Off by default to prevent requests to localhost, *.local, and private IP ranges.",
+            render: (setting) => {
+              setting.addToggle((toggle) =>
+                toggle.setValue(this.plugin.settings.allowPrivateNetworkUrls).onChange(async (value) => {
+                  this.plugin.settings.allowPrivateNetworkUrls = value;
+                  await this.plugin.saveSettings();
+                })
+              );
+            }
+          },
+          {
+            name: "Request timeout (ms)",
+            desc: `Timeout for provider requests (${MIN_REQUEST_TIMEOUT_MS}-${MAX_REQUEST_TIMEOUT_MS}).`,
+            render: (setting) => {
+              setting.addText((text) =>
+                text
+                  .setPlaceholder(String(DEFAULT_SETTINGS.requestTimeoutMs))
+                  .setValue(String(this.plugin.settings.requestTimeoutMs))
+                  .onChange(async (value) => {
+                    const parsed = Number.parseInt(value, 10);
+                    if (Number.isNaN(parsed)) {
+                      return;
+                    }
 
-    new Setting(containerEl).setName("Gemini").setHeading();
-
-    new Setting(containerEl)
-      .setName("Gemini API key")
-      .setDesc("Key used for gemini requests. Stored locally in Obsidian plugin data; not encrypted by this plugin.")
-      .addText((text) =>
-        text
-          .setValue(this.plugin.settings.geminiApiKey)
-          .onChange(async (value) => {
-            this.plugin.settings.geminiApiKey = value.trim();
-            await this.plugin.saveSettings();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Gemini model name")
-      .setDesc("Gemini model to use. You can type any model name.")
-      .addText((text) =>
-        text
-          .setValue(this.plugin.settings.geminiModelName)
-          .onChange(async (value) => {
-            this.plugin.settings.geminiModelName = value.trim() || DEFAULT_SETTINGS.geminiModelName;
-            await this.plugin.saveSettings();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Flash model presets")
-      .setDesc("Quickly choose a recent flash preview model.")
-      .addButton((button) =>
-        button.setButtonText("3.1 flash lite preview").onClick(async () => {
-          this.plugin.settings.geminiModelName = FLASH_MODEL_PRESETS[0];
-          await this.plugin.saveSettings();
-          this.display();
-        })
-      )
-      .addButton((button) =>
-        button.setButtonText("3 flash preview").onClick(async () => {
-          this.plugin.settings.geminiModelName = FLASH_MODEL_PRESETS[1];
-          await this.plugin.saveSettings();
-          this.display();
-        })
-      );
-
-    new Setting(containerEl).setName("Openai").setHeading();
-
-    new Setting(containerEl)
-      .setName("Openai key")
-      .setDesc("Key used for openai requests. Stored locally in Obsidian plugin data; not encrypted by this plugin.")
-      .addText((text) =>
-        text.setValue(this.plugin.settings.openaiApiKey).onChange(async (value) => {
-          this.plugin.settings.openaiApiKey = value.trim();
-          await this.plugin.saveSettings();
-        })
-      );
-
-    new Setting(containerEl)
-      .setName("Openai model")
-      .setDesc("Openai model to use. You can type any model name.")
-      .addText((text) =>
-        text.setValue(this.plugin.settings.openaiModelName).onChange(async (value) => {
-          this.plugin.settings.openaiModelName = value.trim() || DEFAULT_SETTINGS.openaiModelName;
-          await this.plugin.saveSettings();
-        })
-      );
-
-    new Setting(containerEl)
-      .setName("Openai model presets")
-      .setDesc("Quickly choose a common openai model.")
-      .addButton((button) =>
-        button.setButtonText("Use gpt-5.4-mini").onClick(async () => {
-          this.plugin.settings.openaiModelName = OPENAI_MODEL_PRESETS[0];
-          await this.plugin.saveSettings();
-          this.display();
-        })
-      )
-      .addButton((button) =>
-        button.setButtonText("Use gpt-5.3-chat-latest").onClick(async () => {
-          this.plugin.settings.openaiModelName = OPENAI_MODEL_PRESETS[1];
-          await this.plugin.saveSettings();
-          this.display();
-        })
-      );
-
-    new Setting(containerEl).setName("Claude").setHeading();
-
-    new Setting(containerEl)
-      .setName("Claude API key")
-      .setDesc("Key used for claude requests. Stored locally in Obsidian plugin data; not encrypted by this plugin.")
-      .addText((text) =>
-        text.setValue(this.plugin.settings.claudeApiKey).onChange(async (value) => {
-          this.plugin.settings.claudeApiKey = value.trim();
-          await this.plugin.saveSettings();
-        })
-      );
-
-    new Setting(containerEl)
-      .setName("Claude model")
-      .setDesc("Claude model to use. You can type any model name.")
-      .addText((text) =>
-        text.setValue(this.plugin.settings.claudeModelName).onChange(async (value) => {
-          this.plugin.settings.claudeModelName = value.trim() || DEFAULT_SETTINGS.claudeModelName;
-          await this.plugin.saveSettings();
-        })
-      );
-
-    new Setting(containerEl)
-      .setName("Claude model presets")
-      .setDesc("Quickly choose a common claude model.")
-      .addButton((button) =>
-        button.setButtonText("Use claude-sonnet-4-6").onClick(async () => {
-          this.plugin.settings.claudeModelName = CLAUDE_MODEL_PRESETS[0];
-          await this.plugin.saveSettings();
-          this.display();
-        })
-      )
-      .addButton((button) =>
-        button.setButtonText("Use claude-haiku-4-5").onClick(async () => {
-          this.plugin.settings.claudeModelName = CLAUDE_MODEL_PRESETS[1];
-          await this.plugin.saveSettings();
-          this.display();
-        })
-      );
+                    this.plugin.settings.requestTimeoutMs = clampRequestTimeoutMs(parsed);
+                    await this.plugin.saveSettings();
+                  })
+              );
+            }
+          }
+        ]
+      },
+      {
+        type: "group",
+        heading: "Gemini",
+        items: [
+          {
+            name: "Gemini API key",
+            desc: "Key used for gemini requests. Stored locally in Obsidian plugin data; not encrypted by this plugin.",
+            render: (setting) => {
+              setting.addText((text) =>
+                text.setValue(this.plugin.settings.geminiApiKey).onChange(async (value) => {
+                  this.plugin.settings.geminiApiKey = value.trim();
+                  await this.plugin.saveSettings();
+                })
+              );
+            }
+          },
+          {
+            name: "Gemini model name",
+            desc: "Gemini model to use. You can type any model name.",
+            render: (setting) => {
+              setting.addText((text) =>
+                text.setValue(this.plugin.settings.geminiModelName).onChange(async (value) => {
+                  this.plugin.settings.geminiModelName = value.trim() || DEFAULT_SETTINGS.geminiModelName;
+                  await this.plugin.saveSettings();
+                })
+              );
+            }
+          },
+          {
+            name: "Flash model presets",
+            desc: "Quickly choose a recent flash preview model.",
+            render: (setting) => {
+              setting
+                .addButton((button) =>
+                  button.setButtonText("3.1 flash lite preview").onClick(async () => {
+                    this.plugin.settings.geminiModelName = FLASH_MODEL_PRESETS[0];
+                    await this.plugin.saveSettings();
+                    this.update();
+                  })
+                )
+                .addButton((button) =>
+                  button.setButtonText("3 flash preview").onClick(async () => {
+                    this.plugin.settings.geminiModelName = FLASH_MODEL_PRESETS[1];
+                    await this.plugin.saveSettings();
+                    this.update();
+                  })
+                );
+            }
+          }
+        ]
+      },
+      {
+        type: "group",
+        heading: "Openai",
+        items: [
+          {
+            name: "Openai key",
+            desc: "Key used for openai requests. Stored locally in Obsidian plugin data; not encrypted by this plugin.",
+            render: (setting) => {
+              setting.addText((text) =>
+                text.setValue(this.plugin.settings.openaiApiKey).onChange(async (value) => {
+                  this.plugin.settings.openaiApiKey = value.trim();
+                  await this.plugin.saveSettings();
+                })
+              );
+            }
+          },
+          {
+            name: "Openai model",
+            desc: "Openai model to use. You can type any model name.",
+            render: (setting) => {
+              setting.addText((text) =>
+                text.setValue(this.plugin.settings.openaiModelName).onChange(async (value) => {
+                  this.plugin.settings.openaiModelName = value.trim() || DEFAULT_SETTINGS.openaiModelName;
+                  await this.plugin.saveSettings();
+                })
+              );
+            }
+          },
+          {
+            name: "Openai model presets",
+            desc: "Quickly choose a common openai model.",
+            render: (setting) => {
+              setting
+                .addButton((button) =>
+                  button.setButtonText("Use gpt-5.4-mini").onClick(async () => {
+                    this.plugin.settings.openaiModelName = OPENAI_MODEL_PRESETS[0];
+                    await this.plugin.saveSettings();
+                    this.update();
+                  })
+                )
+                .addButton((button) =>
+                  button.setButtonText("Use gpt-5.3-chat-latest").onClick(async () => {
+                    this.plugin.settings.openaiModelName = OPENAI_MODEL_PRESETS[1];
+                    await this.plugin.saveSettings();
+                    this.update();
+                  })
+                );
+            }
+          }
+        ]
+      },
+      {
+        type: "group",
+        heading: "Claude",
+        items: [
+          {
+            name: "Claude API key",
+            desc: "Key used for claude requests. Stored locally in Obsidian plugin data; not encrypted by this plugin.",
+            render: (setting) => {
+              setting.addText((text) =>
+                text.setValue(this.plugin.settings.claudeApiKey).onChange(async (value) => {
+                  this.plugin.settings.claudeApiKey = value.trim();
+                  await this.plugin.saveSettings();
+                })
+              );
+            }
+          },
+          {
+            name: "Claude model",
+            desc: "Claude model to use. You can type any model name.",
+            render: (setting) => {
+              setting.addText((text) =>
+                text.setValue(this.plugin.settings.claudeModelName).onChange(async (value) => {
+                  this.plugin.settings.claudeModelName = value.trim() || DEFAULT_SETTINGS.claudeModelName;
+                  await this.plugin.saveSettings();
+                })
+              );
+            }
+          },
+          {
+            name: "Claude model presets",
+            desc: "Quickly choose a common claude model.",
+            render: (setting) => {
+              setting
+                .addButton((button) =>
+                  button.setButtonText("Use claude-sonnet-4-6").onClick(async () => {
+                    this.plugin.settings.claudeModelName = CLAUDE_MODEL_PRESETS[0];
+                    await this.plugin.saveSettings();
+                    this.update();
+                  })
+                )
+                .addButton((button) =>
+                  button.setButtonText("Use claude-haiku-4-5").onClick(async () => {
+                    this.plugin.settings.claudeModelName = CLAUDE_MODEL_PRESETS[1];
+                    await this.plugin.saveSettings();
+                    this.update();
+                  })
+                );
+            }
+          }
+        ]
+      }
+    ];
   }
 }
