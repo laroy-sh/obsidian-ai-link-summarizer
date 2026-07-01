@@ -1,7 +1,7 @@
 {
   "name": "ai-link-summarizer",
   "version": "0.3.2",
-  "description": "Obsidian community plugin to summarize links with Gemini or OpenAI.",
+  "description": "Right-click links in Obsidian and summarize them with Gemini, OpenAI, or Claude.",
   "main": "main.js",
   "scripts": {
     "build": "node esbuild.config.mjs production",
