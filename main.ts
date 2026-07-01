@@ -840,7 +840,7 @@ class GeminiLinkSummarizerSettingTab extends PluginSettingTab {
       .setDesc("Stored locally in Obsidian plugin data; not encrypted by this plugin.")
       .addButton((button) =>
         button
-          .setDestructive()
+          .setWarning()
           .setButtonText("Clear stored keys")
           .onClick(async () => {
             await this.plugin.clearStoredApiKeys();
