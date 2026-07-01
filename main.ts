@@ -549,8 +549,8 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
     if (contentType.includes("text/html")) {
       // Strip tags and collapse whitespace; keep at most 20 000 chars to stay within context
       return response.text
-        .replace(/<script[\s\S]*?<\/script>/gi, " ")
-        .replace(/<style[\s\S]*?<\/style>/gi, " ")
+        .replace(/<script\b[\s\S]*?<\/script\b[^>]*>/gi, " ")
+        .replace(/<style\b[\s\S]*?<\/style\b[^>]*>/gi, " ")
         .replace(/<[^>]+>/g, " ")
         .replace(/\s+/g, " ")
         .trim()
