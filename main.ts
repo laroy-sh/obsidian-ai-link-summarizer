@@ -844,7 +844,7 @@ class GeminiLinkSummarizerSettingTab extends PluginSettingTab {
             render: (setting) => {
               setting.addButton((button) =>
                 button
-                  .setWarning()
+                  .setDestructive()
                   .setButtonText("Clear stored keys")
                   .onClick(async () => {
                     await this.plugin.clearStoredApiKeys();
