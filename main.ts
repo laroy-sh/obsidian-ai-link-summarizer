@@ -46,9 +46,9 @@ const DEFAULT_SETTINGS: GeminiLinkSummarizerSettings = {
   fetchMode: "auto",
   authGatedHosts: [...AUTH_GATED_DEFAULT_HOSTS],
   geminiApiKey: "",
-  geminiModelName: "gemini-3.1-flash-lite-preview",
+  geminiModelName: "gemini-3.5-flash",
   openaiApiKey: "",
-  openaiModelName: "gpt-5.3-chat-latest",
+  openaiModelName: "chat-latest",
   claudeApiKey: "",
   claudeModelName: "claude-sonnet-4-6",
   customPrompt: "",
@@ -85,8 +85,8 @@ const MIN_REQUEST_TIMEOUT_MS = 5000;
 const MAX_REQUEST_TIMEOUT_MS = 120000;
 const MAX_PROVIDER_OUTPUT_TOKENS = 700;
 const HARD_SUMMARY_CHAR_CAP = 4000;
-const FLASH_MODEL_PRESETS = ["gemini-3.1-flash-lite-preview", "gemini-3-flash-preview"] as const;
-const OPENAI_MODEL_PRESETS = ["gpt-5.4-mini", "gpt-5.3-chat-latest"] as const;
+const FLASH_MODEL_PRESETS = ["gemini-3.5-flash", "gemini-3.1-flash-lite"] as const;
+const OPENAI_MODEL_PRESETS = ["gpt-5.4-mini", "chat-latest"] as const;
 const CLAUDE_MODEL_PRESETS = ["claude-sonnet-4-6", "claude-haiku-4-5-20251001"] as const;
 
 function clampSummaryLengthChars(value: number): number {
@@ -1377,16 +1377,16 @@ class GeminiLinkSummarizerSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Flash model presets")
-      .setDesc("Quickly choose a recent flash preview model.")
+      .setDesc("Quickly choose a recent flash model.")
       .addButton((button) =>
-        button.setButtonText("3.1 flash lite preview").onClick(async () => {
+        button.setButtonText("3.5 flash").onClick(async () => {
           this.plugin.settings.geminiModelName = FLASH_MODEL_PRESETS[0];
           await this.plugin.saveSettings();
           this.display();
         })
       )
       .addButton((button) =>
-        button.setButtonText("3 flash preview").onClick(async () => {
+        button.setButtonText("3.1 flash lite").onClick(async () => {
           this.plugin.settings.geminiModelName = FLASH_MODEL_PRESETS[1];
           await this.plugin.saveSettings();
           this.display();
@@ -1426,7 +1426,7 @@ class GeminiLinkSummarizerSettingTab extends PluginSettingTab {
         })
       )
       .addButton((button) =>
-        button.setButtonText("Use gpt-5.3-chat-latest").onClick(async () => {
+        button.setButtonText("Use chat-latest").onClick(async () => {
           this.plugin.settings.openaiModelName = OPENAI_MODEL_PRESETS[1];
           await this.plugin.saveSettings();
           this.display();
