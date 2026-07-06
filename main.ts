@@ -1,12 +1,19 @@
-import { App, Editor, EditorPosition, MarkdownView, Notice, Plugin, PluginSettingTab, Setting, requestUrl } from "obsidian";
+import { App, Editor, EditorPosition, MarkdownView, Modal, Notice, Platform, Plugin, PluginSettingTab, Setting, requestUrl } from "obsidian";
 import { GoogleGenAI } from "@google/genai";
 import OpenAI from "openai";
 import Anthropic, { APIError } from "@anthropic-ai/sdk";
 
 type SummaryProvider = "gemini" | "openai" | "claude";
+// How to obtain the page text before summarizing.
+//   provider = let the LLM provider fetch the URL itself (Gemini urlContext / OpenAI web_search / Claude requestUrl)
+//   browser  = render the page in a logged-in, persistent webview session (reads auth-gated pages like LinkedIn)
+//   auto     = browser for auth-gated hosts, provider for everything else
+type FetchMode = "auto" | "provider" | "browser";
 
 interface GeminiLinkSummarizerSettings {
   provider: SummaryProvider;
+  fetchMode: FetchMode;
+  authGatedHosts: string[];
   geminiApiKey: string;
   geminiModelName: string;
   openaiApiKey: string;
@@ -32,8 +39,12 @@ interface UrlTarget {
   insertBefore: EditorPosition;
 }
 
+const AUTH_GATED_DEFAULT_HOSTS = ["linkedin.com", "x.com", "twitter.com", "medium.com"];
+
 const DEFAULT_SETTINGS: GeminiLinkSummarizerSettings = {
   provider: "gemini",
+  fetchMode: "auto",
+  authGatedHosts: [...AUTH_GATED_DEFAULT_HOSTS],
   geminiApiKey: "",
   geminiModelName: "gemini-3.1-flash-lite-preview",
   openaiApiKey: "",
@@ -54,6 +65,14 @@ const UNREADABLE_PAGE_ERROR = "UNREADABLE_PAGE";
 const EMPTY_SUMMARY_ERROR = "EMPTY_SUMMARY";
 const REQUEST_TIMEOUT_ERROR = "REQUEST_TIMEOUT";
 const BLOCKED_URL_ERROR = "BLOCKED_URL";
+const NEEDS_LOGIN_ERROR = "NEEDS_LOGIN";
+const DESKTOP_ONLY_ERROR = "DESKTOP_ONLY";
+// Shared persistent Electron session for the login-backed webview fetch.
+const BROWSER_PARTITION = "persist:als-browser";
+// Minimum characters of extracted page text below which we assume a login wall / empty render.
+const MIN_PAGE_TEXT_CHARS = 80;
+// Extra settle delay after the page stops loading, to let SPAs (LinkedIn/X) render content.
+const BROWSER_SETTLE_MS = 1200;
 const MIN_SUMMARY_LENGTH_CHARS = 200;
 const MAX_SUMMARY_LENGTH_CHARS = 2000;
 const MIN_REQUEST_TIMEOUT_MS = 5000;
@@ -119,6 +138,14 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
       }
     });
 
+    this.addCommand({
+      id: "login-sites",
+      name: "Log in to sites for browser fetch",
+      callback: () => {
+        this.openLoginBrowser();
+      }
+    });
+
     this.registerEvent(
       this.app.workspace.on("editor-menu", (menu, editor) => {
         const target = this.extractUrlFromEditor(editor);
@@ -156,6 +183,15 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
     this.settings.provider = (["openai", "claude"] as string[]).includes(this.settings.provider)
       ? this.settings.provider
       : "gemini";
+    this.settings.fetchMode = (["provider", "browser"] as string[]).includes(this.settings.fetchMode)
+      ? this.settings.fetchMode
+      : "auto";
+    if (!Array.isArray(this.settings.authGatedHosts)) {
+      this.settings.authGatedHosts = [...AUTH_GATED_DEFAULT_HOSTS];
+    }
+    this.settings.authGatedHosts = this.settings.authGatedHosts
+      .map((host) => host.trim().toLowerCase().replace(/^www\./, ""))
+      .filter((host) => host.length > 0);
     this.settings.geminiModelName = this.settings.geminiModelName.trim() || DEFAULT_SETTINGS.geminiModelName;
     this.settings.openaiModelName = this.settings.openaiModelName.trim() || DEFAULT_SETTINGS.openaiModelName;
     this.settings.claudeModelName = (this.settings.claudeModelName ?? "").trim() || DEFAULT_SETTINGS.claudeModelName;
@@ -462,9 +498,93 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
   }
 
   private async requestSummary(url: string): Promise<string> {
+    const parsed = this.parseHttpUrl(url);
+    const mode = parsed ? this.chooseFetchMode(parsed) : "provider";
+    if (mode === "browser") {
+      if (!Platform.isDesktopApp) {
+        throw new Error(DESKTOP_ONLY_ERROR);
+      }
+      const pageText = await this.runWithTimeout(async () =>
+        BrowserFetcher.fetchText(url, clampRequestTimeoutMs(this.settings.requestTimeoutMs))
+      );
+      if (pageText.trim().length < MIN_PAGE_TEXT_CHARS) {
+        throw new Error(NEEDS_LOGIN_ERROR);
+      }
+      return this.summarizeFromText(url, pageText);
+    }
     if (this.settings.provider === "claude") return this.requestClaudeSummary(url);
     if (this.settings.provider === "openai") return this.requestOpenAiSummary(url);
     return this.requestGeminiSummary(url);
+  }
+
+  private chooseFetchMode(parsedUrl: URL): "provider" | "browser" {
+    if (this.settings.fetchMode === "provider") return "provider";
+    if (this.settings.fetchMode === "browser") return "browser";
+    const host = parsedUrl.hostname.toLowerCase().replace(/^www\./, "");
+    const gated = this.settings.authGatedHosts.some((h) => host === h || host.endsWith("." + h));
+    return gated ? "browser" : "provider";
+  }
+
+  private openLoginBrowser(): void {
+    if (!Platform.isDesktopApp) {
+      new Notice(`${NOTICE_PREFIX}: browser login is desktop-only.`);
+      return;
+    }
+    new BrowserLoginModal(this.app, this.settings.authGatedHosts).open();
+  }
+
+  // Summarize page text we already fetched ourselves (browser/local), using the active provider
+  // WITHOUT its URL-fetching tool. This is what makes auth-gated pages (LinkedIn/X) work.
+  private async summarizeFromText(url: string, pageText: string): Promise<string> {
+    const prompt = this.buildClaudePrompt(url, pageText);
+    const provider = this.settings.provider;
+    let raw = "";
+
+    if (provider === "claude") {
+      const client = new Anthropic({ apiKey: this.settings.claudeApiKey.trim(), dangerouslyAllowBrowser: true });
+      const model = this.settings.claudeModelName.trim() || DEFAULT_SETTINGS.claudeModelName;
+      const response = await this.runWithTimeout(async (signal) =>
+        client.messages.create(
+          { model, max_tokens: MAX_PROVIDER_OUTPUT_TOKENS, messages: [{ role: "user", content: prompt }] },
+          { signal }
+        )
+      );
+      raw = this.extractClaudeResponseText(response);
+    } else if (provider === "openai") {
+      const client = new OpenAI({ apiKey: this.settings.openaiApiKey.trim(), dangerouslyAllowBrowser: true });
+      const model = this.settings.openaiModelName.trim() || DEFAULT_SETTINGS.openaiModelName;
+      const response = await this.runWithTimeout(async (signal) =>
+        client.responses.create(
+          { model, input: prompt, max_output_tokens: MAX_PROVIDER_OUTPUT_TOKENS },
+          { signal }
+        )
+      );
+      raw = this.extractOpenAiResponseText(response);
+    } else {
+      const ai = new GoogleGenAI({ apiKey: this.settings.geminiApiKey.trim() });
+      const model = this.settings.geminiModelName.trim() || DEFAULT_SETTINGS.geminiModelName;
+      const response = await this.runWithTimeout(async (signal) => {
+        const request = ai.models.generateContent({
+          model,
+          contents: prompt,
+          config: { maxOutputTokens: MAX_PROVIDER_OUTPUT_TOKENS }
+        });
+        const abortRequest = new Promise<never>((_, reject) => {
+          signal.addEventListener("abort", () => reject(new Error(REQUEST_TIMEOUT_ERROR)), { once: true });
+        });
+        return await Promise.race([request, abortRequest]);
+      });
+      raw = this.extractResponseText(response);
+    }
+
+    if (!raw) {
+      throw new Error(EMPTY_SUMMARY_ERROR);
+    }
+    const normalized = raw.replace(/\s+/g, " ").trim();
+    if (!normalized) {
+      throw new Error(UNREADABLE_PAGE_ERROR);
+    }
+    return this.fitSummaryLength(normalized);
   }
 
   private async requestGeminiSummary(url: string): Promise<string> {
@@ -759,6 +879,14 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
       return `${NOTICE_PREFIX}: private-network URLs are blocked by policy.`;
     }
 
+    if (message === DESKTOP_ONLY_ERROR) {
+      return `${NOTICE_PREFIX}: browser fetch is desktop-only.`;
+    }
+
+    if (message === NEEDS_LOGIN_ERROR) {
+      return `${NOTICE_PREFIX}: couldn't read the page — run "Log in to sites for browser fetch", sign in, then retry.`;
+    }
+
     if (message === REQUEST_TIMEOUT_ERROR || lower.includes("timeout")) {
       return `${NOTICE_PREFIX}: ${provider} request timed out.`;
     }
@@ -806,6 +934,102 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
   }
 }
 
+interface WebviewElement extends HTMLElement {
+  executeJavaScript(code: string): Promise<unknown>;
+}
+
+class BrowserFetcher {
+  // Render `url` in an off-screen Electron <webview> that shares a persistent, logged-in session,
+  // then return the visible text. This is how auth-gated pages (LinkedIn/X) become readable.
+  static fetchText(url: string, timeoutMs: number): Promise<string> {
+    return new Promise<string>((resolve, reject) => {
+      let settled = false;
+      const webview = document.createElement("webview") as unknown as WebviewElement;
+      webview.addClass("als-fetch-webview");
+      webview.setAttribute("partition", BROWSER_PARTITION);
+      webview.setAttribute(
+        "useragent",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+      );
+
+      const finish = (fn: () => void): void => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timer);
+        webview.remove();
+        fn();
+      };
+      const timer = window.setTimeout(
+        () => finish(() => reject(new Error(REQUEST_TIMEOUT_ERROR))),
+        timeoutMs
+      );
+
+      const extract = (): void => {
+        window.setTimeout(() => {
+          webview
+            .executeJavaScript("document.body ? document.body.innerText : ''")
+            .then((text) => finish(() => resolve(String(text ?? "").slice(0, 20000))))
+            .catch((error) =>
+              finish(() => reject(error instanceof Error ? error : new Error(String(error))))
+            );
+        }, BROWSER_SETTLE_MS);
+      };
+
+      webview.addEventListener("did-stop-loading", extract, { once: true });
+      webview.addEventListener("did-fail-load", (evt: Event) => {
+        const failure = evt as unknown as { isMainFrame?: boolean; errorCode?: number };
+        // Only hard-fail on main-frame errors; sub-resource failures are common and harmless.
+        if (failure.isMainFrame && typeof failure.errorCode === "number" && failure.errorCode <= -100) {
+          finish(() => reject(new Error(UNREADABLE_PAGE_ERROR)));
+        }
+      });
+
+      webview.setAttribute("src", url);
+      document.body.appendChild(webview);
+    });
+  }
+}
+
+class BrowserLoginModal extends Modal {
+  constructor(app: App, private hosts: string[]) {
+    super(app);
+  }
+
+  onOpen(): void {
+    const { contentEl, titleEl } = this;
+    titleEl.setText("Log in for browser fetch");
+    contentEl.createEl("p", {
+      text:
+        "Sign in below (LinkedIn, X, or any site). Your session is remembered, so later summaries of " +
+        "auth-gated links work without fetching from a provider. Close this window when you are done."
+    });
+    const webview = document.createElement("webview") as unknown as WebviewElement;
+    webview.addClass("als-login-webview");
+    webview.setAttribute("partition", BROWSER_PARTITION);
+    webview.setAttribute("src", this.hosts.length > 0 ? `https://${this.hosts[0]}` : "https://www.linkedin.com/login");
+
+    const nav = contentEl.createDiv({ cls: "als-login-nav" });
+    for (const host of this.hosts) {
+      nav.createEl("button", { text: host }).addEventListener("click", () => {
+        webview.setAttribute("src", `https://${host}`);
+      });
+    }
+    const urlInput = nav.createEl("input", { type: "text", placeholder: "or enter a URL and press Enter…" });
+    urlInput.addEventListener("keydown", (evt) => {
+      if (evt.key !== "Enter") return;
+      const raw = urlInput.value.trim();
+      if (!raw) return;
+      webview.setAttribute("src", /^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
+    });
+
+    contentEl.appendChild(webview);
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
+}
+
 class GeminiLinkSummarizerSettingTab extends PluginSettingTab {
   plugin: GeminiLinkSummarizerPlugin;
 
@@ -833,6 +1057,58 @@ class GeminiLinkSummarizerSettingTab extends PluginSettingTab {
               : "gemini";
             await this.plugin.saveSettings();
           })
+      );
+
+    this.addSectionHeading(containerEl, "Fetch");
+
+    new Setting(containerEl)
+      .setName("Fetch mode")
+      .setDesc(
+        "How the page is fetched before summarizing. Auto = use a logged-in browser session for " +
+          "auth-gated hosts (below) and the provider for everything else."
+      )
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption("auto", "Auto")
+          .addOption("provider", "Provider-native")
+          .addOption("browser", "Browser session")
+          .setValue(this.plugin.settings.fetchMode)
+          .onChange(async (value) => {
+            this.plugin.settings.fetchMode = (["provider", "browser"] as string[]).includes(value)
+              ? (value as FetchMode)
+              : "auto";
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Auth-gated hosts")
+      .setDesc("Comma or newline separated; in auto mode these hosts are fetched via the logged-in browser session.")
+      .addTextArea((textArea) => {
+        textArea.inputEl.rows = 3;
+        return textArea
+          .setPlaceholder(AUTH_GATED_DEFAULT_HOSTS.join(", "))
+          .setValue(this.plugin.settings.authGatedHosts.join(", "))
+          .onChange(async (value) => {
+            this.plugin.settings.authGatedHosts = value
+              .split(/[\s,]+/)
+              .map((host) => host.trim().toLowerCase().replace(/^www\./, ""))
+              .filter((host) => host.length > 0);
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(containerEl)
+      .setName("Browser session login")
+      .setDesc("Open a browser to sign in to a site, then reuse that session for later summaries.")
+      .addButton((button) =>
+        button.setButtonText("Log in to sites").onClick(() => {
+          if (!Platform.isDesktopApp) {
+            new Notice(`${NOTICE_PREFIX}: browser login is desktop-only.`);
+            return;
+          }
+          new BrowserLoginModal(this.app, this.plugin.settings.authGatedHosts).open();
+        })
       );
 
     new Setting(containerEl)
