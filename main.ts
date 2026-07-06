@@ -1,4 +1,4 @@
-import { App, Editor, EditorPosition, MarkdownView, Modal, Notice, Platform, Plugin, PluginSettingTab, Setting, requestUrl } from "obsidian";
+import { App, Editor, EditorPosition, MarkdownView, Modal, Notice, Platform, Plugin, PluginSettingTab, Setting, TFile, TFolder, requestUrl } from "obsidian";
 import { GoogleGenAI } from "@google/genai";
 import OpenAI from "openai";
 import Anthropic, { APIError } from "@anthropic-ai/sdk";
@@ -73,6 +73,12 @@ const BROWSER_PARTITION = "persist:als-browser";
 const MIN_PAGE_TEXT_CHARS = 80;
 // Extra settle delay after the page stops loading, to let SPAs (LinkedIn/X) render content.
 const BROWSER_SETTLE_MS = 1200;
+// Callout inserted into a note by the batch summarizer; also the marker used to skip already-done notes.
+const SUMMARY_CALLOUT_HEADER = "> [!summary] AI summary";
+// Pause between notes in a batch run, to be gentle on the provider.
+const BATCH_DELAY_MS = 250;
+// A note counts as "link-only" if the non-URL prose left after stripping markdown is shorter than this.
+const LINK_ONLY_PROSE_MAX = 80;
 const MIN_SUMMARY_LENGTH_CHARS = 200;
 const MAX_SUMMARY_LENGTH_CHARS = 2000;
 const MIN_REQUEST_TIMEOUT_MS = 5000;
@@ -126,6 +132,7 @@ function formatSummaryRange(minValue: number, maxValue: number): string {
 
 export default class GeminiLinkSummarizerPlugin extends Plugin {
   settings: GeminiLinkSummarizerSettings = DEFAULT_SETTINGS;
+  private batchRunning = false;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -145,6 +152,37 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
         this.openLoginBrowser();
       }
     });
+
+    this.addCommand({
+      id: "summarize-folder-link-notes",
+      name: "Summarize link notes in current folder",
+      checkCallback: (checking: boolean) => {
+        const folder = this.app.workspace.getActiveFile()?.parent;
+        if (!folder) {
+          return false;
+        }
+        if (!checking) {
+          void this.summarizeFolderLinkNotes(folder);
+        }
+        return true;
+      }
+    });
+
+    this.registerEvent(
+      this.app.workspace.on("file-menu", (menu, file) => {
+        if (!(file instanceof TFolder)) {
+          return;
+        }
+        menu.addItem((item) => {
+          item
+            .setTitle("Summarize link notes in folder")
+            .setIcon("link")
+            .onClick(() => {
+              void this.summarizeFolderLinkNotes(file);
+            });
+        });
+      })
+    );
 
     this.registerEvent(
       this.app.workspace.on("editor-menu", (menu, editor) => {
@@ -256,6 +294,94 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
       console.error("[ai-link-summarizer] request error:", error);
       new Notice(this.toNoticeMessage(error));
     }
+  }
+
+  private async summarizeFolderLinkNotes(folder: TFolder): Promise<void> {
+    if (this.batchRunning) {
+      new Notice(`${NOTICE_PREFIX}: a batch is already running.`);
+      return;
+    }
+    if (!this.getActiveApiKey()) {
+      new Notice(`${NOTICE_PREFIX}: add your ${this.getActiveProviderLabel()} API key in plugin settings.`);
+      return;
+    }
+
+    const prefix = folder.path ? `${folder.path}/` : "";
+    const files = this.app.vault.getMarkdownFiles().filter((file) => file.path.startsWith(prefix));
+    const targets: { file: TFile; url: string }[] = [];
+    for (const file of files) {
+      const content = await this.app.vault.cachedRead(file);
+      const url = this.extractLinkOnlyUrl(content);
+      if (!url) {
+        continue;
+      }
+      const parsed = this.parseHttpUrl(url);
+      if (!parsed) {
+        continue;
+      }
+      if (!this.settings.allowPrivateNetworkUrls && this.isPrivateNetworkTarget(parsed)) {
+        continue;
+      }
+      targets.push({ file, url });
+    }
+
+    if (targets.length === 0) {
+      new Notice(`${NOTICE_PREFIX}: no un-summarized link notes found in ${folder.path || "the vault root"}.`);
+      return;
+    }
+
+    new BatchConfirmModal(this.app, targets.length, () => {
+      void this.runBatchSummaries(targets);
+    }).open();
+  }
+
+  private async runBatchSummaries(targets: { file: TFile; url: string }[]): Promise<void> {
+    this.batchRunning = true;
+    const progress = new Notice(`${NOTICE_PREFIX}: starting.`, 0);
+    let done = 0;
+    let failed = 0;
+    try {
+      for (let index = 0; index < targets.length; index++) {
+        const { file, url } = targets[index];
+        progress.setMessage(`${NOTICE_PREFIX}: ${index + 1}/${targets.length} (done ${done}, failed ${failed})`);
+        try {
+          const summary = await this.requestSummary(url);
+          const block = `\n\n${SUMMARY_CALLOUT_HEADER}\n> ${this.formatOutput(summary)}\n`;
+          await this.app.vault.process(file, (data) =>
+            data.includes(SUMMARY_CALLOUT_HEADER) ? data : `${data.trimEnd()}${block}`
+          );
+          done++;
+        } catch (error: unknown) {
+          failed++;
+          console.error("[ai-link-summarizer] batch:", file.path, error);
+        }
+        if (index < targets.length - 1) {
+          await new Promise<void>((resolve) => window.setTimeout(resolve, BATCH_DELAY_MS));
+        }
+      }
+    } finally {
+      progress.hide();
+      this.batchRunning = false;
+    }
+    new Notice(`${NOTICE_PREFIX}: done — ${done} summarized, ${failed} failed.`);
+  }
+
+  // Returns the URL if the note is essentially just a link (and not already summarized), else null.
+  private extractLinkOnlyUrl(content: string): string | null {
+    const body = content.replace(/^---\n[\s\S]*?\n---\n?/, "");
+    if (body.includes(SUMMARY_CALLOUT_HEADER)) {
+      return null;
+    }
+    const urlPattern = /https?:\/\/[^\s<>"'`)\]]+/g;
+    const urls = body.match(urlPattern);
+    if (!urls || urls.length === 0) {
+      return null;
+    }
+    const prose = body.replace(urlPattern, " ").replace(/[#[\]()<>*_`!|>.:,\s-]/g, "");
+    if (prose.length > LINK_ONLY_PROSE_MAX) {
+      return null;
+    }
+    return this.cleanExtractedUrl(urls[0]);
   }
 
   private getActiveEditor(): Editor | null {
@@ -987,6 +1113,40 @@ class BrowserFetcher {
       webview.setAttribute("src", url);
       document.body.appendChild(webview);
     });
+  }
+}
+
+class BatchConfirmModal extends Modal {
+  private readonly count: number;
+  private readonly onConfirm: () => void;
+
+  constructor(app: App, count: number, onConfirm: () => void) {
+    super(app);
+    this.count = count;
+    this.onConfirm = onConfirm;
+  }
+
+  onOpen(): void {
+    const { contentEl, titleEl } = this;
+    titleEl.setText("Summarize link notes");
+    contentEl.createEl("p", {
+      text: `Found ${this.count} link-only notes without a summary; each makes one request to the active provider.`
+    });
+    new Setting(contentEl)
+      .addButton((button) => button.setButtonText("Cancel").onClick(() => this.close()))
+      .addButton((button) =>
+        button
+          .setButtonText("Summarize")
+          .setCta()
+          .onClick(() => {
+            this.close();
+            this.onConfirm();
+          })
+      );
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
   }
 }
 
