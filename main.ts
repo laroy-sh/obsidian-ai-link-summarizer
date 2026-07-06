@@ -77,6 +77,8 @@ const BROWSER_SETTLE_MS = 1200;
 const SUMMARY_CALLOUT_HEADER = "> [!summary] AI summary";
 // Pause between notes in a batch run, to be gentle on the provider.
 const BATCH_DELAY_MS = 250;
+// Vault note where per-file batch failures are written (overwritten on each run).
+const BATCH_LOG_PATH = "AI Link Summarizer batch log.md";
 // A note counts as "link-only" if the non-URL prose left after stripping markdown is shorter than this.
 const LINK_ONLY_PROSE_MAX = 80;
 const MIN_SUMMARY_LENGTH_CHARS = 200;
@@ -340,6 +342,7 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
     const progress = new Notice(`${NOTICE_PREFIX}: starting.`, 0);
     let done = 0;
     let failed = 0;
+    const failures: { path: string; reason: string }[] = [];
     try {
       for (let index = 0; index < targets.length; index++) {
         const { file, url } = targets[index];
@@ -353,6 +356,7 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
           done++;
         } catch (error: unknown) {
           failed++;
+          failures.push({ path: file.path, reason: this.toNoticeMessage(error).replace(`${NOTICE_PREFIX}: `, "") });
           console.error("[ai-link-summarizer] batch:", file.path, error);
         }
         if (index < targets.length - 1) {
@@ -363,7 +367,29 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
       progress.hide();
       this.batchRunning = false;
     }
-    new Notice(`${NOTICE_PREFIX}: done — ${done} summarized, ${failed} failed.`);
+    if (failures.length > 0) {
+      await this.writeBatchLog(done, failures);
+      new Notice(`${NOTICE_PREFIX}: done — ${done} summarized, ${failed} failed. See "${BATCH_LOG_PATH}".`, 0);
+    } else {
+      new Notice(`${NOTICE_PREFIX}: done — ${done} summarized, ${failed} failed.`);
+    }
+  }
+
+  // ponytail: overwrites each run — the log is a "last run" report, not a history.
+  private async writeBatchLog(done: number, failures: { path: string; reason: string }[]): Promise<void> {
+    const lines = failures.map((f) => `- [[${f.path.replace(/\.md$/, "")}]] — ${f.reason}`);
+    const content =
+      `Batch run ${new Date().toLocaleString()} — ${done} summarized, ${failures.length} failed.\n\n${lines.join("\n")}\n`;
+    try {
+      const existing = this.app.vault.getAbstractFileByPath(BATCH_LOG_PATH);
+      if (existing instanceof TFile) {
+        await this.app.vault.modify(existing, content);
+      } else {
+        await this.app.vault.create(BATCH_LOG_PATH, content);
+      }
+    } catch (error: unknown) {
+      console.error("[ai-link-summarizer] batch log:", error);
+    }
   }
 
   // Returns the URL if the note is essentially just a link (and not already summarized), else null.
