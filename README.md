@@ -3,6 +3,8 @@
 Right-click a URL or Markdown link in the editor and run **Summarize link**.
 AI Link Summarizer sends the target URL to Gemini, OpenAI, or Claude, then inserts a concise summary into the current note on a new line **before the detected link**.
 
+Auth-gated pages (LinkedIn, X, Medium, ...) are read through a logged-in browser session you sign in to once, and whole folders of link notes can be summarized in one batch.
+
 ## Features
 
 - Detects URLs from:
@@ -10,6 +12,15 @@ AI Link Summarizer sends the target URL to Gemini, OpenAI, or Claude, then inser
   - selected Markdown links (`[label](https://...)`)
   - Markdown/raw link under cursor on right-click
 - Adds editor context menu action: **Summarize link**
+- Batch mode: right-click a folder → **Summarize link notes in folder** (also available as a command for the current folder)
+  - appends an `[!summary]` callout to each link-only note; already-summarized notes are skipped, so re-runs resume where they stopped
+  - waits out per-minute provider rate limits automatically and stops early when a daily quota is exhausted
+  - per-note failure reasons are written to `AI Link Summarizer batch log.md` in the vault root (overwritten each run)
+- Fetch modes (how page content is obtained):
+  - `provider` — the LLM provider fetches the URL itself
+  - `browser` — the page is rendered in a hidden, logged-in, persistent webview session (reads auth-gated pages)
+  - `auto` (default) — browser session for configured auth-gated hosts, provider for everything else
+- Browser session login: **Log in to sites for browser fetch** opens a modal with one-click buttons for each configured auth-gated host plus a free-form URL bar; sign in once and the session is remembered
 - Provider support:
   - Gemini via `@google/genai` + `urlContext`
   - OpenAI via `openai` + `web_search_preview`
@@ -21,8 +32,9 @@ AI Link Summarizer sends the target URL to Gemini, OpenAI, or Claude, then inser
   - Gemini API key + model
   - OpenAI API key + model
   - Claude API key + model
-  - Gemini model presets: `gemini-3.1-flash-lite-preview`, `gemini-3-flash-preview`
-  - OpenAI model presets: `gpt-5.4-mini`, `gpt-5.3-chat-latest`
+  - Fetch mode (auto / provider-native / browser session) and the auth-gated host list
+  - Gemini model presets: `gemini-3.5-flash`, `gemini-3.1-flash-lite` (with free-tier quota notes)
+  - OpenAI model presets: `gpt-5.4-mini`, `chat-latest` (GPT-5.5 Instant)
   - Claude model presets: `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`
   - Summary length range (characters), format like `200-600` (minimum `200`)
   - Private-network URL policy toggle (advanced)
@@ -35,8 +47,9 @@ AI Link Summarizer sends the target URL to Gemini, OpenAI, or Claude, then inser
   - invalid URL
   - blocked private-network URL
   - provider request timeout
-  - provider request failure
+  - provider request failure (with real HTTP status mapping: invalid key, rate limit, exhausted quota, server error)
   - unsupported/unreadable page
+  - auth-gated page that needs a browser login
   - no active editor
 
 ## Build
