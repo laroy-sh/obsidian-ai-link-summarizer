@@ -1,7 +1,7 @@
 import { App, Editor, EditorPosition, MarkdownView, Modal, Notice, Platform, Plugin, PluginSettingTab, Setting, TFile, TFolder, requestUrl } from "obsidian";
 import { GoogleGenAI, ThinkingLevel } from "@google/genai";
 import OpenAI from "openai";
-import Anthropic, { APIError } from "@anthropic-ai/sdk";
+import Anthropic from "@anthropic-ai/sdk";
 
 type SummaryProvider = "gemini" | "openai" | "claude";
 // How to obtain the page text before summarizing.
@@ -1057,24 +1057,30 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
       return `${NOTICE_PREFIX}: unsupported or unreadable page.`;
     }
 
-    if (error instanceof APIError) {
-      if (error.status === 401) {
+    // Anthropic, OpenAI, and Google GenAI SDK errors all expose a numeric .status;
+    // duck-type it so every provider gets the specific message, not just Claude.
+    const status = (error as { status?: unknown }).status;
+    if (typeof status === "number") {
+      if (status === 401) {
         return `${NOTICE_PREFIX}: ${provider} request failed. Invalid API key.`;
       }
-      if (error.status === 403) {
+      if (status === 403) {
         return `${NOTICE_PREFIX}: ${provider} request failed. API key lacks permission.`;
       }
-      if (error.status === 400) {
+      if (status === 400) {
         if (lower.includes("credit balance") || lower.includes("billing")) {
           return `${NOTICE_PREFIX}: ${provider} request failed. Insufficient API credits — add credits at console.anthropic.com.`;
         }
         return `${NOTICE_PREFIX}: ${provider} request failed. Bad request — check model name and settings (HTTP 400).`;
       }
-      if (error.status === 429) {
+      if (status === 429) {
+        if (lower.includes("quota")) {
+          return `${NOTICE_PREFIX}: ${provider} quota exceeded (e.g. free-tier daily limit) — check your plan and billing, or switch provider/model.`;
+        }
         return `${NOTICE_PREFIX}: ${provider} rate limit exceeded. Try again later.`;
       }
-      if (error.status !== undefined && error.status >= 500) {
-        return `${NOTICE_PREFIX}: ${provider} server error (HTTP ${error.status}). Try again later.`;
+      if (status >= 500) {
+        return `${NOTICE_PREFIX}: ${provider} server error (HTTP ${status}). Try again later.`;
       }
     }
 
