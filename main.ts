@@ -351,7 +351,11 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
         const { file, url } = targets[index];
         progress.setMessage(`${NOTICE_PREFIX}: ${index + 1}/${targets.length} (done ${done}, failed ${failed})`);
         try {
-          const summary = await this.requestSummary(url);
+          const summary = await this.requestSummaryWithRateLimitRetry(url, (seconds, attempt) =>
+            progress.setMessage(
+              `${NOTICE_PREFIX}: rate limited — retry ${attempt} in ${seconds}s (${index + 1}/${targets.length})`
+            )
+          );
           const block = `\n\n${SUMMARY_CALLOUT_HEADER}\n> ${this.formatOutput(summary)}\n`;
           await this.app.vault.process(file, (data) =>
             data.includes(SUMMARY_CALLOUT_HEADER) ? data : `${data.trimEnd()}${block}`
@@ -361,6 +365,13 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
           failed++;
           failures.push({ path: file.path, reason: this.toNoticeMessage(error).replace(`${NOTICE_PREFIX}: `, "") });
           console.error("[ai-link-summarizer] batch:", file.path, error);
+          if (this.isExhaustedQuotaError(error)) {
+            new Notice(
+              `${NOTICE_PREFIX}: provider quota exhausted — stopping the batch (${targets.length - index - 1} notes not attempted).`,
+              0
+            );
+            break;
+          }
         }
         if (index < targets.length - 1) {
           await new Promise<void>((resolve) => window.setTimeout(resolve, BATCH_DELAY_MS));
@@ -376,6 +387,40 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
     } else {
       new Notice(`${NOTICE_PREFIX}: done — ${done} summarized, ${failed} failed.`);
     }
+  }
+
+  // Retries per-minute rate limits (429) using the API's suggested retryDelay when present.
+  // ponytail: reactive backoff instead of proactive pacing — adapts to any tier's RPM without config.
+  private async requestSummaryWithRateLimitRetry(
+    url: string,
+    onWait: (seconds: number, attempt: number) => void
+  ): Promise<string> {
+    const maxAttempts = 4;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await this.requestSummary(url);
+      } catch (error: unknown) {
+        const status = (error as { status?: unknown }).status;
+        if (status !== 429 || this.isExhaustedQuotaError(error) || attempt >= maxAttempts) {
+          throw error;
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        const delayMatch = message.match(/"retryDelay":\s*"(\d+(?:\.\d+)?)s"/);
+        const waitSeconds = delayMatch ? Math.ceil(Number(delayMatch[1])) + 1 : 30 * attempt;
+        onWait(waitSeconds, attempt);
+        await new Promise<void>((resolve) => window.setTimeout(resolve, waitSeconds * 1000));
+      }
+    }
+  }
+
+  // A 429 that waiting cannot cure: Gemini per-day free-tier quota or OpenAI insufficient_quota.
+  private isExhaustedQuotaError(error: unknown): boolean {
+    const status = (error as { status?: unknown }).status;
+    if (status !== 429) {
+      return false;
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    return /perday/i.test(message) || message.includes("insufficient_quota");
   }
 
   // ponytail: overwrites each run — the log is a "last run" report, not a history.
