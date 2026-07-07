@@ -295,8 +295,10 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
 
     try {
       const summary = await this.requestSummary(cleanedUrl);
-      const output = `${this.formatOutput(summary)}\n`;
-      editor.replaceRange(output, target.insertBefore);
+      // Callouts must start at a line beginning, and need a trailing blank line so the
+      // link line below is not lazily continued into the callout.
+      const output = `${this.buildSummaryCallout(summary)}\n\n`;
+      editor.replaceRange(output, { line: target.insertBefore.line, ch: 0 });
       new Notice(`${NOTICE_PREFIX}: summary inserted.`);
     } catch (error: unknown) {
       console.error("[ai-link-summarizer] request error:", error);
@@ -359,7 +361,7 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
               `${NOTICE_PREFIX}: rate limited — retry ${attempt} in ${seconds}s (${index + 1}/${targets.length})`
             )
           );
-          const block = `\n\n${SUMMARY_CALLOUT_HEADER}\n> ${this.formatOutput(summary)}\n`;
+          const block = `\n\n${this.buildSummaryCallout(summary)}\n`;
           await this.app.vault.process(file, (data) =>
             data.includes(SUMMARY_CALLOUT_HEADER) ? data : `${data.trimEnd()}${block}`
           );
@@ -1167,6 +1169,10 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
     }
 
     return chunks.join("\n").trim();
+  }
+
+  private buildSummaryCallout(summary: string): string {
+    return `${SUMMARY_CALLOUT_HEADER}\n> ${this.formatOutput(summary)}`;
   }
 
   private formatOutput(summary: string): string {
