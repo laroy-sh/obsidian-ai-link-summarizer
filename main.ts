@@ -27,6 +27,8 @@ interface GeminiLinkSummarizerSettings {
   summaryMaxChars: number;
   allowPrivateNetworkUrls: boolean;
   requestTimeoutMs: number;
+  autoIngestInbox: boolean;
+  inboxFolder: string;
 }
 
 interface LegacySettings {
@@ -58,7 +60,9 @@ const DEFAULT_SETTINGS: GeminiLinkSummarizerSettings = {
   summaryMinChars: 200,
   summaryMaxChars: 600,
   allowPrivateNetworkUrls: false,
-  requestTimeoutMs: 30000
+  requestTimeoutMs: 30000,
+  autoIngestInbox: true,
+  inboxFolder: "_inbox"
 };
 
 const MENU_TITLE = "Summarize link";
@@ -79,6 +83,8 @@ const BROWSER_SETTLE_MS = 1200;
 const SUMMARY_CALLOUT_HEADER = "> [!summary] AI summary";
 // Pause between notes in a batch run, to be gentle on the provider.
 const BATCH_DELAY_MS = 250;
+// Debounce after an inbox note's "create" event before summarizing, so its content settles first.
+const INBOX_DEBOUNCE_MS = 800;
 // Vault note where per-file batch failures are written (overwritten on each run).
 const BATCH_LOG_PATH = "AI Link Summarizer batch log.md";
 // A note counts as "link-only" if the non-URL prose left after stripping markdown is shorter than this.
@@ -140,6 +146,7 @@ function formatSummaryRange(minValue: number, maxValue: number): string {
 export default class GeminiLinkSummarizerPlugin extends Plugin {
   settings: GeminiLinkSummarizerSettings = DEFAULT_SETTINGS;
   private batchRunning = false;
+  private readonly inboxInFlight = new Set<string>();
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -205,6 +212,19 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
         });
       })
     );
+
+    // Auto-ingest the inbox. Registered after layout-ready so Obsidian's startup "create" replay for
+    // existing files is skipped; the one-time sweep instead catches links that arrived while closed.
+    this.app.workspace.onLayoutReady(() => {
+      this.registerEvent(
+        this.app.vault.on("create", (file) => {
+          if (file instanceof TFile) {
+            this.handleInboxCreate(file);
+          }
+        })
+      );
+      void this.sweepInbox();
+    });
   }
 
   async loadSettings(): Promise<void> {
@@ -246,6 +266,9 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
     this.settings.allowPrivateNetworkUrls = Boolean(this.settings.allowPrivateNetworkUrls);
     this.settings.batchTitleAndTags = this.settings.batchTitleAndTags !== false;
     this.settings.requestTimeoutMs = clampRequestTimeoutMs(this.settings.requestTimeoutMs);
+    this.settings.autoIngestInbox = this.settings.autoIngestInbox !== false;
+    this.settings.inboxFolder =
+      (this.settings.inboxFolder ?? "").trim().replace(/^\/+|\/+$/g, "") || DEFAULT_SETTINGS.inboxFolder;
   }
 
   async saveSettings(): Promise<void> {
@@ -405,6 +428,93 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
       new Notice(`${NOTICE_PREFIX}: done — ${done} summarized, ${failed} failed. See "${BATCH_LOG_PATH}".`, 0);
     } else {
       new Notice(`${NOTICE_PREFIX}: done — ${done} summarized, ${failed} failed.`);
+    }
+  }
+
+  // True for a markdown note directly inside the inbox folder (not nested, not the folder's README).
+  private isInboxFile(file: TFile): boolean {
+    const folder = this.settings.inboxFolder;
+    return (
+      file.extension === "md" &&
+      folder.length > 0 &&
+      file.parent?.path === folder &&
+      file.basename.toLowerCase() !== "readme"
+    );
+  }
+
+  // Debounced entry point for the vault "create" event: the event fires before content is written,
+  // so wait, then process. The in-flight set dedupes any repeat create for the same path.
+  private handleInboxCreate(file: TFile): void {
+    if (!this.settings.autoIngestInbox || !this.isInboxFile(file) || this.inboxInFlight.has(file.path)) {
+      return;
+    }
+    this.inboxInFlight.add(file.path);
+    window.setTimeout(() => {
+      void this.processInboxFile(file).finally(() => this.inboxInFlight.delete(file.path));
+    }, INBOX_DEBOUNCE_MS);
+  }
+
+  // Summarize one inbox link-note in place (append callout + optional title/tags). Never moves it —
+  // notes are held in the inbox for review. No-op for non-link or already-summarized notes.
+  private async processInboxFile(file: TFile): Promise<void> {
+    if (this.batchRunning || !this.getActiveApiKey()) {
+      return;
+    }
+    let content: string;
+    try {
+      content = await this.app.vault.cachedRead(file);
+    } catch (error: unknown) {
+      console.error("[ai-link-summarizer] inbox read:", file.path, error);
+      return;
+    }
+    const url = this.extractLinkOnlyUrl(content);
+    if (!url) {
+      return;
+    }
+    const parsed = this.parseHttpUrl(url);
+    if (!parsed || (!this.settings.allowPrivateNetworkUrls && this.isPrivateNetworkTarget(parsed))) {
+      return;
+    }
+    try {
+      const summary = await this.requestSummaryWithRateLimitRetry(url, () => undefined);
+      const block = `\n\n${this.buildSummaryCallout(summary)}\n`;
+      await this.app.vault.process(file, (data) =>
+        data.includes(SUMMARY_CALLOUT_HEADER) ? data : `${data.trimEnd()}${block}`
+      );
+      if (this.settings.batchTitleAndTags) {
+        try {
+          const enrichment = await this.withRateLimitRetry(() => this.requestTitleAndTags(summary), () => undefined);
+          await this.applyTitleAndTags(file, enrichment.title, enrichment.tags);
+        } catch (enrichError: unknown) {
+          console.warn("[ai-link-summarizer] inbox title/tags skipped:", file.path, enrichError);
+        }
+      }
+    } catch (error: unknown) {
+      console.error("[ai-link-summarizer] inbox auto-ingest:", file.path, error);
+    }
+  }
+
+  // One-time startup catch-up: summarize any un-summarized link notes already sitting in the inbox
+  // (links that arrived while Obsidian was closed). Gentle pacing; skips notes another path is handling.
+  private async sweepInbox(): Promise<void> {
+    if (!this.settings.autoIngestInbox || this.batchRunning || !this.getActiveApiKey()) {
+      return;
+    }
+    const files = this.app.vault.getMarkdownFiles().filter((file) => this.isInboxFile(file));
+    for (let index = 0; index < files.length; index++) {
+      const file = files[index];
+      if (this.inboxInFlight.has(file.path)) {
+        continue;
+      }
+      this.inboxInFlight.add(file.path);
+      try {
+        await this.processInboxFile(file);
+      } finally {
+        this.inboxInFlight.delete(file.path);
+      }
+      if (index < files.length - 1) {
+        await new Promise<void>((resolve) => window.setTimeout(resolve, BATCH_DELAY_MS));
+      }
     }
   }
 
@@ -1487,6 +1597,34 @@ class GeminiLinkSummarizerSettingTab extends PluginSettingTab {
           this.plugin.settings.batchTitleAndTags = value;
           await this.plugin.saveSettings();
         })
+      );
+
+    this.addSectionHeading(containerEl, "Inbox auto-ingest");
+
+    new Setting(containerEl)
+      .setName("Auto-summarize new inbox notes")
+      .setDesc(
+        "When a link-only note is created in the inbox folder (or found there at startup), summarize " +
+          "and tag it automatically. Notes stay in the inbox for review — they are not moved."
+      )
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.autoIngestInbox).onChange(async (value) => {
+          this.plugin.settings.autoIngestInbox = value;
+          await this.plugin.saveSettings();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName("Inbox folder")
+      .setDesc("Vault-relative folder watched for auto-ingest.")
+      .addText((text) =>
+        text
+          .setPlaceholder(DEFAULT_SETTINGS.inboxFolder)
+          .setValue(this.plugin.settings.inboxFolder)
+          .onChange(async (value) => {
+            this.plugin.settings.inboxFolder = value.trim().replace(/^\/+|\/+$/g, "") || DEFAULT_SETTINGS.inboxFolder;
+            await this.plugin.saveSettings();
+          })
       );
 
     this.addSectionHeading(containerEl, "Summary");

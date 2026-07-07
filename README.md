@@ -17,6 +17,10 @@ Auth-gated pages (LinkedIn, X, Medium, ...) are read through a logged-in browser
   - with **Generate title and tags** enabled (default), also renames each note to an AI-generated title (from its summary) and merges topic tags into frontmatter — best-effort, so the summary still lands if titling fails
   - waits out per-minute provider rate limits automatically and stops early when a daily quota is exhausted
   - per-note failure reasons are written to `AI Link Summarizer batch log.md` in the vault root (overwritten each run)
+- Inbox auto-ingest: link-only notes dropped into a watched folder are summarized (and titled/tagged) automatically, reusing the same per-note pipeline as batch mode
+  - runs both when a note is created in the folder and in a one-time startup sweep of notes already sitting there
+  - notes are held in place — never moved — for a later review pass
+  - non-link notes and already-summarized notes are skipped
 - Fetch modes (how page content is obtained):
   - `provider` — the LLM provider fetches the URL itself
   - `browser` — the page is rendered in a hidden, logged-in, persistent webview session (reads auth-gated pages)
@@ -44,6 +48,8 @@ Auth-gated pages (LinkedIn, X, Medium, ...) are read through a logged-in browser
   - Custom prompt (optional)
   - Include timestamp
   - Generate title and tags in batch runs (default on)
+  - Auto-summarize new inbox notes (default on) — auto-ingest link notes created in, or found at startup in, the inbox folder
+  - Inbox folder watched for auto-ingest (vault-relative, default `_inbox`)
 - Notices + clean errors for:
   - no URL found
   - invalid URL
