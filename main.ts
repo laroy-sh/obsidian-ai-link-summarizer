@@ -22,6 +22,7 @@ interface GeminiLinkSummarizerSettings {
   claudeModelName: string;
   customPrompt: string;
   includeTimestamp: boolean;
+  batchTitleAndTags: boolean;
   summaryMinChars: number;
   summaryMaxChars: number;
   allowPrivateNetworkUrls: boolean;
@@ -53,6 +54,7 @@ const DEFAULT_SETTINGS: GeminiLinkSummarizerSettings = {
   claudeModelName: "claude-sonnet-4-6",
   customPrompt: "",
   includeTimestamp: false,
+  batchTitleAndTags: true,
   summaryMinChars: 200,
   summaryMaxChars: 600,
   allowPrivateNetworkUrls: false,
@@ -242,6 +244,7 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
     this.settings.openaiApiKey = this.settings.openaiApiKey.trim();
     this.settings.claudeApiKey = (this.settings.claudeApiKey ?? "").trim();
     this.settings.allowPrivateNetworkUrls = Boolean(this.settings.allowPrivateNetworkUrls);
+    this.settings.batchTitleAndTags = this.settings.batchTitleAndTags !== false;
     this.settings.requestTimeoutMs = clampRequestTimeoutMs(this.settings.requestTimeoutMs);
   }
 
@@ -361,6 +364,20 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
             data.includes(SUMMARY_CALLOUT_HEADER) ? data : `${data.trimEnd()}${block}`
           );
           done++;
+          if (this.settings.batchTitleAndTags) {
+            try {
+              const enrichment = await this.withRateLimitRetry(
+                () => this.requestTitleAndTags(summary),
+                (seconds, attempt) =>
+                  progress.setMessage(
+                    `${NOTICE_PREFIX}: titling ${index + 1}/${targets.length} — rate limited, retry ${attempt} in ${seconds}s`
+                  )
+              );
+              await this.applyTitleAndTags(file, enrichment.title, enrichment.tags);
+            } catch (enrichError: unknown) {
+              console.warn("[ai-link-summarizer] title/tags skipped:", file.path, enrichError);
+            }
+          }
         } catch (error: unknown) {
           failed++;
           failures.push({ path: file.path, reason: this.toNoticeMessage(error).replace(`${NOTICE_PREFIX}: `, "") });
@@ -395,10 +412,17 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
     url: string,
     onWait: (seconds: number, attempt: number) => void
   ): Promise<string> {
+    return this.withRateLimitRetry(() => this.requestSummary(url), onWait);
+  }
+
+  private async withRateLimitRetry<T>(
+    op: () => Promise<T>,
+    onWait: (seconds: number, attempt: number) => void
+  ): Promise<T> {
     const maxAttempts = 4;
     for (let attempt = 1; ; attempt++) {
       try {
-        return await this.requestSummary(url);
+        return await op();
       } catch (error: unknown) {
         const status = (error as { status?: unknown }).status;
         if (status !== 429 || this.isExhaustedQuotaError(error) || attempt >= maxAttempts) {
@@ -736,10 +760,21 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
   // Summarize page text we already fetched ourselves (browser/local), using the active provider
   // WITHOUT its URL-fetching tool. This is what makes auth-gated pages (LinkedIn/X) work.
   private async summarizeFromText(url: string, pageText: string): Promise<string> {
-    const prompt = this.buildClaudePrompt(url, pageText);
-    const provider = this.settings.provider;
-    let raw = "";
+    const raw = await this.runProviderCompletion(this.buildClaudePrompt(url, pageText));
+    if (!raw) {
+      throw new Error(EMPTY_SUMMARY_ERROR);
+    }
+    const normalized = raw.replace(/\s+/g, " ").trim();
+    if (!normalized) {
+      throw new Error(UNREADABLE_PAGE_ERROR);
+    }
+    return this.fitSummaryLength(normalized);
+  }
 
+  // Single text-in / text-out call to the active provider (no URL-fetch tools).
+  // Used by summary-from-text and the batch title/tag pass.
+  private async runProviderCompletion(prompt: string): Promise<string> {
+    const provider = this.settings.provider;
     if (provider === "claude") {
       const client = new Anthropic({ apiKey: this.settings.claudeApiKey.trim(), dangerouslyAllowBrowser: true });
       const model = this.settings.claudeModelName.trim() || DEFAULT_SETTINGS.claudeModelName;
@@ -749,8 +784,9 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
           { signal }
         )
       );
-      raw = this.extractClaudeResponseText(response);
-    } else if (provider === "openai") {
+      return this.extractClaudeResponseText(response);
+    }
+    if (provider === "openai") {
       const client = new OpenAI({ apiKey: this.settings.openaiApiKey.trim(), dangerouslyAllowBrowser: true });
       const model = this.settings.openaiModelName.trim() || DEFAULT_SETTINGS.openaiModelName;
       const response = await this.runWithTimeout(async (signal) =>
@@ -759,35 +795,100 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
           { signal }
         )
       );
-      raw = this.extractOpenAiResponseText(response);
-    } else {
-      const ai = new GoogleGenAI({ apiKey: this.settings.geminiApiKey.trim() });
-      const model = this.settings.geminiModelName.trim() || DEFAULT_SETTINGS.geminiModelName;
-      const response = await this.runWithTimeout(async (signal) => {
-        const request = ai.models.generateContent({
-          model,
-          contents: prompt,
-          config: {
-            maxOutputTokens: MAX_PROVIDER_OUTPUT_TOKENS,
-            thinkingConfig: { thinkingLevel: ThinkingLevel.LOW }
-          }
-        });
-        const abortRequest = new Promise<never>((_, reject) => {
-          signal.addEventListener("abort", () => reject(new Error(REQUEST_TIMEOUT_ERROR)), { once: true });
-        });
-        return await Promise.race([request, abortRequest]);
-      });
-      raw = this.extractResponseText(response);
+      return this.extractOpenAiResponseText(response);
     }
+    const ai = new GoogleGenAI({ apiKey: this.settings.geminiApiKey.trim() });
+    const model = this.settings.geminiModelName.trim() || DEFAULT_SETTINGS.geminiModelName;
+    const response = await this.runWithTimeout(async (signal) => {
+      const request = ai.models.generateContent({
+        model,
+        contents: prompt,
+        config: {
+          maxOutputTokens: MAX_PROVIDER_OUTPUT_TOKENS,
+          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW }
+        }
+      });
+      const abortRequest = new Promise<never>((_, reject) => {
+        signal.addEventListener("abort", () => reject(new Error(REQUEST_TIMEOUT_ERROR)), { once: true });
+      });
+      return await Promise.race([request, abortRequest]);
+    });
+    return this.extractResponseText(response);
+  }
 
-    if (!raw) {
+  private buildTitleTagsPrompt(summary: string): string {
+    return [
+      "From the article summary below, produce a note title and topic tags.",
+      "Return ONLY a compact JSON object and nothing else (no code fences, no commentary):",
+      '{"title": "...", "tags": ["...", "..."]}',
+      "title: a concise, specific Title Case name for the note — the actual subject (product, tool, or article), 3 to 80 characters, no line breaks, and without any of these characters: \\ / : * ? \" < > | # ^ [ ].",
+      "tags: 2 to 4 short lowercase topic tags, single words or hyphenated, with no leading number sign.",
+      "",
+      `Summary: ${summary}`
+    ].join("\n");
+  }
+
+  private async requestTitleAndTags(summary: string): Promise<{ title: string; tags: string[] }> {
+    const raw = await this.runProviderCompletion(this.buildTitleTagsPrompt(summary));
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (!match) {
       throw new Error(EMPTY_SUMMARY_ERROR);
     }
-    const normalized = raw.replace(/\s+/g, " ").trim();
-    if (!normalized) {
-      throw new Error(UNREADABLE_PAGE_ERROR);
+    const parsed = JSON.parse(match[0]) as { title?: unknown; tags?: unknown };
+    const title = typeof parsed.title === "string" ? this.sanitizeTitle(parsed.title) : "";
+    if (!title) {
+      throw new Error(EMPTY_SUMMARY_ERROR);
     }
-    return this.fitSummaryLength(normalized);
+    const tags = Array.isArray(parsed.tags)
+      ? parsed.tags
+          .filter((tag): tag is string => typeof tag === "string")
+          .map((tag) => tag.trim().toLowerCase().replace(/^#/, ""))
+          .filter((tag) => tag.length > 0)
+          .slice(0, 4)
+      : [];
+    return { title, tags };
+  }
+
+  private sanitizeTitle(title: string): string {
+    return title
+      .replace(/[\\/:*?"<>|#^[\]]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 90)
+      .trim();
+  }
+
+  private async applyTitleAndTags(file: TFile, title: string, tags: string[]): Promise<void> {
+    if (tags.length > 0) {
+      await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
+        const current = frontmatter.tags;
+        const existing: string[] = Array.isArray(current)
+          ? current.map((tag) => String(tag))
+          : typeof current === "string" && current.length > 0
+            ? [current]
+            : [];
+        const merged: string[] = [];
+        for (const tag of [...existing, ...tags]) {
+          const lower = tag.toLowerCase();
+          if (!merged.includes(lower)) {
+            merged.push(lower);
+          }
+        }
+        frontmatter.tags = merged;
+      });
+    }
+
+    const folderPath = file.parent?.path ?? "";
+    const base = folderPath ? `${folderPath}/${title}` : title;
+    let candidate = `${base}.md`;
+    let suffix = 2;
+    while (candidate !== file.path && this.app.vault.getAbstractFileByPath(candidate) !== null) {
+      candidate = `${base} ${suffix}.md`;
+      suffix++;
+    }
+    if (candidate !== file.path) {
+      await this.app.fileManager.renameFile(file, candidate);
+    }
   }
 
   private async requestGeminiSummary(url: string): Promise<string> {
@@ -1217,7 +1318,7 @@ class BatchConfirmModal extends Modal {
     const { contentEl, titleEl } = this;
     titleEl.setText("Summarize link notes");
     contentEl.createEl("p", {
-      text: `Found ${this.count} link-only notes without a summary; each makes one request to the active provider.`
+      text: `Found ${this.count} link-only notes without a summary; each is summarized (and, if enabled, titled and tagged) via the active provider.`
     });
     new Setting(contentEl)
       .addButton((button) => button.setButtonText("Cancel").onClick(() => this.close()))
@@ -1369,6 +1470,18 @@ class GeminiLinkSummarizerSettingTab extends PluginSettingTab {
           this.display();
         });
       });
+
+    this.addSectionHeading(containerEl, "Batch");
+
+    new Setting(containerEl)
+      .setName("Generate title and tags")
+      .setDesc("In a folder batch, also rename each note from its summary and add topic tags to frontmatter.")
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.batchTitleAndTags).onChange(async (value) => {
+          this.plugin.settings.batchTitleAndTags = value;
+          await this.plugin.saveSettings();
+        })
+      );
 
     this.addSectionHeading(containerEl, "Summary");
 

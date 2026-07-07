@@ -14,6 +14,7 @@ Auth-gated pages (LinkedIn, X, Medium, ...) are read through a logged-in browser
 - Adds editor context menu action: **Summarize link**
 - Batch mode: right-click a folder → **Summarize link notes in folder** (also available as a command for the current folder)
   - appends an `[!summary]` callout to each link-only note; already-summarized notes are skipped, so re-runs resume where they stopped
+  - with **Generate title and tags** enabled (default), also renames each note to an AI-generated title (from its summary) and merges topic tags into frontmatter — best-effort, so the summary still lands if titling fails
   - waits out per-minute provider rate limits automatically and stops early when a daily quota is exhausted
   - per-note failure reasons are written to `AI Link Summarizer batch log.md` in the vault root (overwritten each run)
 - Fetch modes (how page content is obtained):
@@ -42,6 +43,7 @@ Auth-gated pages (LinkedIn, X, Medium, ...) are read through a logged-in browser
   - One-click clear stored API keys (and command: `clear-api-keys`)
   - Custom prompt (optional)
   - Include timestamp
+  - Generate title and tags in batch runs (default on)
 - Notices + clean errors for:
   - no URL found
   - invalid URL
