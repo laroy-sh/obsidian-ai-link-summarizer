@@ -1,7 +1,7 @@
 # AI Link Summarizer (Obsidian Community Plugin)
 
 Right-click a URL or Markdown link in the editor and run **Summarize link**.
-AI Link Summarizer sends the target URL to Gemini, OpenAI, or Claude, then inserts a concise summary into the current note on a new line **before the detected link**.
+AI Link Summarizer sends the target URL to Gemini, OpenAI, or Claude, then inserts a concise summary as an `[!summary]` callout **above the detected link**.
 
 Auth-gated pages (LinkedIn, X, Medium, ...) are read through a logged-in browser session you sign in to once, and whole folders of link notes can be summarized in one batch.
 
@@ -26,7 +26,7 @@ Auth-gated pages (LinkedIn, X, Medium, ...) are read through a logged-in browser
   - Gemini via `@google/genai` + `urlContext`
   - OpenAI via `openai` + `web_search_preview`
   - Claude via `@anthropic-ai/sdk` (fetches page content locally via `requestUrl`)
-- Inserts summary before the detected link (optional timestamp prefix)
+- Inserts the summary as an `[!summary]` callout above the link's line (optional timestamp prefix) — the same format batch mode uses
 - Settings:
   - Provider (Gemini/OpenAI/Claude)
   - Separate settings blocks for Summary, Gemini, OpenAI, and Claude
