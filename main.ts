@@ -1464,7 +1464,9 @@ class GeminiLinkSummarizerSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Flash model presets")
-      .setDesc("Quickly choose a recent flash model.")
+      .setDesc(
+        "Quickly choose a recent flash model. Free-tier quotas are per model per day (3.5 flash is currently ~20 requests/day; lite models are typically higher) — check your live limits at ai.dev/rate-limit. Batch runs stop early when the daily quota is exhausted."
+      )
       .addButton((button) =>
         button.setButtonText("3.5 flash").onClick(async () => {
           this.plugin.settings.geminiModelName = FLASH_MODEL_PRESETS[0];
@@ -1504,7 +1506,9 @@ class GeminiLinkSummarizerSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Openai model presets")
-      .setDesc("Quickly choose a common openai model.")
+      .setDesc(
+        "Quickly choose a common openai model. There is no free tier; rate limits depend on your account's usage tier — see the limits page at platform.openai.com. Note that chat-latest costs noticeably more per token than gpt-5.4-mini."
+      )
       .addButton((button) =>
         button.setButtonText("Use gpt-5.4-mini").onClick(async () => {
           this.plugin.settings.openaiModelName = OPENAI_MODEL_PRESETS[0];
@@ -1544,7 +1548,9 @@ class GeminiLinkSummarizerSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Claude model presets")
-      .setDesc("Quickly choose a common claude model.")
+      .setDesc(
+        "Quickly choose a common claude model. There is no free tier; rate limits depend on your account tier — see console.anthropic.com. Haiku is the cheaper, faster option for batch runs."
+      )
       .addButton((button) =>
         button.setButtonText("Use claude-sonnet-4-6").onClick(async () => {
           this.plugin.settings.claudeModelName = CLAUDE_MODEL_PRESETS[0];
