@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   build-and-release:
@@ -30,14 +32,12 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Package
-        run: |
-          set -euo pipefail
-          rm -rf dist
-          mkdir -p dist
-          cp manifest.json main.js versions.json styles.css dist/
-          cd dist
-          zip -r "../obsidian-ai-link-summarizer-${GITHUB_REF_NAME}.zip" .
+      - name: Attest build provenance
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4
+        with:
+          subject-path: |
+            main.js
+            styles.css
 
       - name: Release
         uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b
@@ -46,6 +46,4 @@ jobs:
           files: |
             main.js
             manifest.json
-            versions.json
             styles.css
-            obsidian-ai-link-summarizer-${{ github.ref_name }}.zip
