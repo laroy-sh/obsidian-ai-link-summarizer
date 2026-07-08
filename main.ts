@@ -504,8 +504,8 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
     if (!this.settings.autoIngestInbox || this.batchRunning || !this.getActiveApiKey()) {
       return;
     }
-    const inbox = this.app.vault.getFolderByPath(this.settings.inboxFolder);
-    if (!inbox) {
+    const inbox = this.app.vault.getAbstractFileByPath(this.settings.inboxFolder);
+    if (!(inbox instanceof TFolder)) {
       return;
     }
     const files = inbox.children.filter((child): child is TFile => child instanceof TFile && this.isInboxFile(child));
