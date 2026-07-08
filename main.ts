@@ -1,4 +1,4 @@
-import { App, Editor, EditorPosition, MarkdownView, Modal, Notice, Platform, Plugin, PluginSettingTab, Setting, TFile, TFolder, requestUrl } from "obsidian";
+import { App, Editor, EditorPosition, MarkdownView, Modal, Notice, Platform, Plugin, PluginSettingTab, Setting, TFile, TFolder, Vault, requestUrl } from "obsidian";
 import { GoogleGenAI, ThinkingLevel } from "@google/genai";
 import OpenAI from "openai";
 import Anthropic from "@anthropic-ai/sdk";
@@ -339,8 +339,12 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
       return;
     }
 
-    const prefix = folder.path ? `${folder.path}/` : "";
-    const files = this.app.vault.getMarkdownFiles().filter((file) => file.path.startsWith(prefix));
+    const files: TFile[] = [];
+    Vault.recurseChildren(folder, (child) => {
+      if (child instanceof TFile && child.extension === "md") {
+        files.push(child);
+      }
+    });
     const targets: { file: TFile; url: string }[] = [];
     for (const file of files) {
       const content = await this.app.vault.cachedRead(file);
@@ -500,7 +504,11 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
     if (!this.settings.autoIngestInbox || this.batchRunning || !this.getActiveApiKey()) {
       return;
     }
-    const files = this.app.vault.getMarkdownFiles().filter((file) => this.isInboxFile(file));
+    const inbox = this.app.vault.getFolderByPath(this.settings.inboxFolder);
+    if (!inbox) {
+      return;
+    }
+    const files = inbox.children.filter((child): child is TFile => child instanceof TFile && this.isInboxFile(child));
     for (let index = 0; index < files.length; index++) {
       const file = files[index];
       if (this.inboxInFlight.has(file.path)) {
@@ -972,8 +980,8 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
 
   private async applyTitleAndTags(file: TFile, title: string, tags: string[]): Promise<void> {
     if (tags.length > 0) {
-      await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
-        const current = frontmatter.tags;
+      await this.app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
+        const current: unknown = frontmatter.tags;
         const existing: string[] = Array.isArray(current)
           ? current.map((tag) => String(tag))
           : typeof current === "string" && current.length > 0
@@ -1374,7 +1382,7 @@ class BrowserFetcher {
   static fetchText(url: string, timeoutMs: number): Promise<string> {
     return new Promise<string>((resolve, reject) => {
       let settled = false;
-      const webview = document.createElement("webview") as unknown as WebviewElement;
+      const webview = activeDocument.createElement("webview") as unknown as WebviewElement;
       webview.addClass("als-fetch-webview");
       webview.setAttribute("partition", BROWSER_PARTITION);
       webview.setAttribute(
@@ -1415,7 +1423,7 @@ class BrowserFetcher {
       });
 
       webview.setAttribute("src", url);
-      document.body.appendChild(webview);
+      activeDocument.body.appendChild(webview);
     });
   }
 }
@@ -1467,7 +1475,7 @@ class BrowserLoginModal extends Modal {
         "Sign in below (LinkedIn, X, or any site). Your session is remembered, so later summaries of " +
         "auth-gated links work without fetching from a provider. Close this window when you are done."
     });
-    const webview = document.createElement("webview") as unknown as WebviewElement;
+    const webview = activeDocument.createElement("webview") as unknown as WebviewElement;
     webview.addClass("als-login-webview");
     webview.setAttribute("partition", BROWSER_PARTITION);
     webview.setAttribute("src", this.hosts.length > 0 ? `https://${this.hosts[0]}` : "https://www.linkedin.com/login");

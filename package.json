@@ -1,7 +1,7 @@
 {
   "name": "ai-link-summarizer",
-  "version": "0.6.0",
-  "description": "Right-click links in Obsidian and summarize them with Gemini, OpenAI, or Claude — including auth-gated pages (LinkedIn/X) via a logged-in browser session.",
+  "version": "0.6.1",
+  "description": "Right-click links and summarize them with Gemini, OpenAI, or Claude — including auth-gated pages (LinkedIn/X) via a logged-in browser session.",
   "main": "main.js",
   "scripts": {
     "build": "node esbuild.config.mjs production",
