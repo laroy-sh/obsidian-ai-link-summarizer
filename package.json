@@ -27,7 +27,7 @@
   "devDependencies": {
     "@eslint/json": "^0.14.0",
     "@types/node": "^24.0.0",
-    "@typescript-eslint/parser": "^8.56.1",
+    "@typescript-eslint/parser": "^8.64.0",
     "esbuild": "^0.28.1",
     "eslint": "^9.39.3",
     "eslint-plugin-obsidianmd": "^0.1.9",
