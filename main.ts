@@ -49,7 +49,7 @@ const DEFAULT_SETTINGS: GeminiLinkSummarizerSettings = {
   fetchMode: "auto",
   authGatedHosts: [...AUTH_GATED_DEFAULT_HOSTS],
   geminiApiKey: "",
-  geminiModelName: "gemini-3.5-flash",
+  geminiModelName: "gemini-3.8-flash",
   openaiApiKey: "",
   openaiModelName: "chat-latest",
   claudeApiKey: "",
@@ -98,7 +98,7 @@ const MAX_REQUEST_TIMEOUT_MS = 120000;
 // client-side by fitSummaryLength, so a generous cap costs little.
 const MAX_PROVIDER_OUTPUT_TOKENS = 4000;
 const HARD_SUMMARY_CHAR_CAP = 4000;
-const FLASH_MODEL_PRESETS = ["gemini-3.5-flash", "gemini-3.1-flash-lite"] as const;
+const FLASH_MODEL_PRESETS = ["gemini-3.8-flash", "gemini-3.5-flash-lite"] as const;
 const OPENAI_MODEL_PRESETS = ["gpt-5.4-mini", "chat-latest"] as const;
 const CLAUDE_MODEL_PRESETS = ["claude-sonnet-4-6", "claude-haiku-4-5-20251001"] as const;
 
@@ -1730,17 +1730,17 @@ class GeminiLinkSummarizerSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Flash model presets")
       .setDesc(
-        "Quickly choose a recent flash model. Free-tier quotas are per model per day (3.5 flash is currently ~20 requests/day; lite models are typically higher) — check your live limits at ai.dev/rate-limit. Batch runs stop early when the daily quota is exhausted."
+        "Quickly choose a recent flash model. Free-tier quotas are per model per day (3.8 flash is currently ~20 requests/day; lite models are typically higher) — check your live limits at ai.dev/rate-limit. Batch runs stop early when the daily quota is exhausted."
       )
       .addButton((button) =>
-        button.setButtonText("3.5 flash").onClick(async () => {
+        button.setButtonText("3.8 flash").onClick(async () => {
           this.plugin.settings.geminiModelName = FLASH_MODEL_PRESETS[0];
           await this.plugin.saveSettings();
           this.display();
         })
       )
       .addButton((button) =>
-        button.setButtonText("3.1 flash lite").onClick(async () => {
+        button.setButtonText("3.5 flash lite").onClick(async () => {
           this.plugin.settings.geminiModelName = FLASH_MODEL_PRESETS[1];
           await this.plugin.saveSettings();
           this.display();

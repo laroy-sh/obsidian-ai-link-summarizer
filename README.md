@@ -38,7 +38,7 @@ Auth-gated pages (LinkedIn, X, Medium, ...) are read through a logged-in browser
   - OpenAI API key + model
   - Claude API key + model
   - Fetch mode (auto / provider-native / browser session) and the auth-gated host list
-  - Gemini model presets: `gemini-3.5-flash`, `gemini-3.1-flash-lite` (with free-tier quota notes)
+  - Gemini model presets: `gemini-3.8-flash`, `gemini-3.5-flash-lite` (with free-tier quota notes)
   - OpenAI model presets: `gpt-5.4-mini`, `chat-latest` (GPT-5.5 Instant)
   - Claude model presets: `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`
   - Summary length range (characters), format like `200-600` (minimum `200`)
