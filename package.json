@@ -1,6 +1,6 @@
 {
   "name": "ai-link-summarizer",
-  "version": "0.6.9",
+  "version": "0.6.10",
   "description": "Right-click links and summarize them with Gemini, OpenAI, or Claude — including auth-gated pages (LinkedIn/X) via a logged-in browser session.",
   "main": "main.js",
   "scripts": {
@@ -25,11 +25,10 @@
     "openai": "^7.62.0"
   },
   "devDependencies": {
-    "@eslint/json": "^0.14.0",
-    "@types/node": "^24.0.0",
+    "@types/node": "^26.6.6",
     "@typescript-eslint/parser": "^8.56.1",
     "esbuild": "^0.28.1",
-    "eslint": "^9.39.3",
+    "eslint": "^10.15.0",
     "eslint-plugin-obsidianmd": "^0.6.0",
     "obsidian": "^1.13.1",
     "typescript": "^5.8.0"

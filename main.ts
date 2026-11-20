@@ -832,7 +832,7 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
       return await executor(controller.signal);
     } catch (error: unknown) {
       if (controller.signal.aborted || this.isAbortLikeError(error)) {
-        throw new Error(REQUEST_TIMEOUT_ERROR);
+        throw new Error(REQUEST_TIMEOUT_ERROR, { cause: error });
       }
 
       throw error;
