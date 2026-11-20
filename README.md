@@ -40,7 +40,7 @@ Auth-gated pages (LinkedIn, X, Medium, ...) are read through a logged-in browser
   - Fetch mode (auto / provider-native / browser session) and the auth-gated host list
   - Gemini model presets: `gemini-3.8-flash`, `gemini-3.5-flash-lite` (with free-tier quota notes)
   - OpenAI model presets: `gpt-5.4-mini`, `chat-latest` (GPT-5.5 Instant)
-  - Claude model presets: `claude-sonnet-5-5`, `claude-haiku-5-5`
+  - Claude model presets: `claude-sonnet-5-5`, `claude-haiku-5-5` (Sonnet 5.5 requests use `medium` reasoning effort)
   - Summary length range (characters), format like `200-600` (minimum `200`)
   - Private-network URL policy toggle (advanced)
   - Request timeout (ms), range `5000-120000`

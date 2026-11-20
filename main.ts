@@ -102,6 +102,14 @@ const FLASH_MODEL_PRESETS = ["gemini-3.8-flash", "gemini-3.5-flash-lite"] as con
 const OPENAI_MODEL_PRESETS = ["gpt-5.4-mini", "chat-latest"] as const;
 const CLAUDE_MODEL_PRESETS = ["claude-sonnet-5-5", "claude-haiku-5-5"] as const;
 
+// Reasoning effort applied to Claude Sonnet 5.5 requests. Other Claude models keep
+// their API default (older ones such as Haiku 4.5 reject the effort parameter).
+const CLAUDE_SONNET_5_5_EFFORT = "medium" as const;
+
+function claudeOutputConfig(model: string): { output_config?: { effort: typeof CLAUDE_SONNET_5_5_EFFORT } } {
+  return model.startsWith("claude-sonnet-5-5") ? { output_config: { effort: CLAUDE_SONNET_5_5_EFFORT } } : {};
+}
+
 function clampSummaryLengthChars(value: number): number {
   if (!Number.isFinite(value)) {
     return MIN_SUMMARY_LENGTH_CHARS;
@@ -900,7 +908,7 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
       const model = this.settings.claudeModelName.trim() || DEFAULT_SETTINGS.claudeModelName;
       const response = await this.runWithTimeout(async (signal) =>
         client.messages.create(
-          { model, max_tokens: MAX_PROVIDER_OUTPUT_TOKENS, messages: [{ role: "user", content: prompt }] },
+          { model, max_tokens: MAX_PROVIDER_OUTPUT_TOKENS, messages: [{ role: "user", content: prompt }], ...claudeOutputConfig(model) },
           { signal }
         )
       );
@@ -1120,7 +1128,8 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
         {
           model,
           max_tokens: MAX_PROVIDER_OUTPUT_TOKENS,
-          messages: [{ role: "user", content: prompt }]
+          messages: [{ role: "user", content: prompt }],
+          ...claudeOutputConfig(model)
         },
         { signal }
       );
