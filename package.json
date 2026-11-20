@@ -1,13 +1,13 @@
 {
   "name": "ai-link-summarizer",
-  "version": "0.6.6",
+  "version": "0.6.7",
   "description": "Right-click links and summarize them with Gemini, OpenAI, or Claude — including auth-gated pages (LinkedIn/X) via a logged-in browser session.",
   "main": "main.js",
   "scripts": {
     "build": "node esbuild.config.mjs production",
     "dev": "node esbuild.config.mjs",
     "check": "tsc --noEmit",
-    "lint:obsidian": "eslint -c eslint.config.mjs --max-warnings 0 main.ts manifest.json",
+    "lint:obsidian": "eslint --max-warnings 0 .",
     "preflight": "npm run check && npm run lint:obsidian && npm run build"
   },
   "keywords": [
@@ -30,11 +30,14 @@
     "@typescript-eslint/parser": "^8.56.1",
     "esbuild": "^0.28.1",
     "eslint": "^9.39.3",
-    "eslint-plugin-obsidianmd": "^0.1.9",
+    "eslint-plugin-obsidianmd": "^0.6.0",
     "obsidian": "^1.13.1",
     "typescript": "^5.8.0"
   },
   "overrides": {
-    "moment": "^2.31.0"
+    "moment": "^2.31.0",
+    "@microsoft/eslint-plugin-sdl": {
+      "eslint-plugin-n": "^17.21.2"
+    }
   }
 }

@@ -1406,7 +1406,7 @@ class BrowserFetcher {
         window.setTimeout(() => {
           webview
             .executeJavaScript("document.body ? document.body.innerText : ''")
-            .then((text) => finish(() => resolve(String(text ?? "").slice(0, 20000))))
+            .then((text: unknown) => finish(() => resolve((typeof text === "string" ? text : "").slice(0, 20000))))
             .catch((error) =>
               finish(() => reject(error instanceof Error ? error : new Error(String(error))))
             );

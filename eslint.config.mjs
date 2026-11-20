@@ -1,35 +1,22 @@
-import { defineConfig } from "eslint/config";
-import tsParser from "@typescript-eslint/parser";
-import json from "@eslint/json";
+import { defineConfig, globalIgnores } from "eslint/config";
 import obsidianmd from "eslint-plugin-obsidianmd";
 
 export default defineConfig([
+  // Build output and Node build scripts are not plugin source.
+  globalIgnores(["node_modules", "dist", "main.js", "esbuild.config.mjs", ".remember"]),
+  ...obsidianmd.configs.recommendedWithLocalesEn,
   {
-    files: ["**/*.ts"],
     languageOptions: {
-      parser: tsParser,
       parserOptions: {
-        project: "./tsconfig.json",
-        tsconfigRootDir: process.cwd(),
-        sourceType: "module",
-        ecmaVersion: 2022
+        projectService: {
+          allowDefaultProject: ["eslint.config.*"]
+        }
       }
     },
-    plugins: {
-      obsidianmd
-    },
-    rules: obsidianmd.configs.recommendedWithLocalesEn
-  },
-  {
-    files: ["manifest.json"],
-    plugins: {
-      json,
-      obsidianmd
-    },
-    language: "json/json",
     rules: {
-      "obsidianmd/validate-manifest": "error",
-      "obsidianmd/ui/sentence-case-json": "error"
+      // getSettingDefinitions() is @since 1.13.0; minAppVersion is 1.5.0, so the
+      // declarative settings API cannot be adopted without raising minAppVersion.
+      "obsidianmd/settings-tab/prefer-setting-definitions": "off"
     }
   }
 ]);
