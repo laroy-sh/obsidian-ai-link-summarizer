@@ -1,6 +1,6 @@
 {
   "name": "ai-link-summarizer",
-  "version": "0.6.8",
+  "version": "0.6.9",
   "description": "Right-click links and summarize them with Gemini, OpenAI, or Claude — including auth-gated pages (LinkedIn/X) via a logged-in browser session.",
   "main": "main.js",
   "scripts": {
@@ -21,8 +21,8 @@
   "license": "MIT",
   "dependencies": {
     "@anthropic-ai/sdk": "^1.11.0",
-    "@google/genai": "^1.0.0",
-    "openai": "^6.25.0"
+    "@google/genai": "^3.6.1",
+    "openai": "^7.62.0"
   },
   "devDependencies": {
     "@eslint/json": "^0.14.0",
