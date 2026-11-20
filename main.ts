@@ -53,7 +53,7 @@ const DEFAULT_SETTINGS: GeminiLinkSummarizerSettings = {
   openaiApiKey: "",
   openaiModelName: "chat-latest",
   claudeApiKey: "",
-  claudeModelName: "claude-sonnet-4-6",
+  claudeModelName: "claude-sonnet-5-5",
   customPrompt: "",
   includeTimestamp: false,
   batchTitleAndTags: true,
@@ -100,7 +100,7 @@ const MAX_PROVIDER_OUTPUT_TOKENS = 4000;
 const HARD_SUMMARY_CHAR_CAP = 4000;
 const FLASH_MODEL_PRESETS = ["gemini-3.8-flash", "gemini-3.5-flash-lite"] as const;
 const OPENAI_MODEL_PRESETS = ["gpt-5.4-mini", "chat-latest"] as const;
-const CLAUDE_MODEL_PRESETS = ["claude-sonnet-4-6", "claude-haiku-4-5-20251001"] as const;
+const CLAUDE_MODEL_PRESETS = ["claude-sonnet-5-5", "claude-haiku-5-5"] as const;
 
 function clampSummaryLengthChars(value: number): number {
   if (!Number.isFinite(value)) {
@@ -1817,14 +1817,14 @@ class GeminiLinkSummarizerSettingTab extends PluginSettingTab {
         "Quickly choose a common claude model. There is no free tier; rate limits depend on your account tier — see console.anthropic.com. Haiku is the cheaper, faster option for batch runs."
       )
       .addButton((button) =>
-        button.setButtonText("Use claude-sonnet-4-6").onClick(async () => {
+        button.setButtonText("Use claude-sonnet-5-5").onClick(async () => {
           this.plugin.settings.claudeModelName = CLAUDE_MODEL_PRESETS[0];
           await this.plugin.saveSettings();
           this.display();
         })
       )
       .addButton((button) =>
-        button.setButtonText("Use claude-haiku-4-5").onClick(async () => {
+        button.setButtonText("Use claude-haiku-5-5").onClick(async () => {
           this.plugin.settings.claudeModelName = CLAUDE_MODEL_PRESETS[1];
           await this.plugin.saveSettings();
           this.display();
