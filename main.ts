@@ -29,6 +29,7 @@ interface GeminiLinkSummarizerSettings {
   requestTimeoutMs: number;
   autoIngestInbox: boolean;
   inboxFolder: string;
+  tagVocabularyPath: string;
 }
 
 interface LegacySettings {
@@ -62,7 +63,8 @@ const DEFAULT_SETTINGS: GeminiLinkSummarizerSettings = {
   allowPrivateNetworkUrls: false,
   requestTimeoutMs: 30000,
   autoIngestInbox: true,
-  inboxFolder: "_inbox"
+  inboxFolder: "_inbox",
+  tagVocabularyPath: "Wiki/Tag Vocabulary.md"
 };
 
 const MENU_TITLE = "Summarize link";
@@ -944,20 +946,57 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
     return this.extractResponseText(response);
   }
 
-  private buildTitleTagsPrompt(summary: string): string {
+  /**
+   * Reads the controlled tag list from a vault note: every `backticked-tag` above an
+   * "## Aliases" heading is a canonical tag; below it, `alias` → `canonical` pairs map
+   * synonyms. Empty vocabulary (no note / no setting) means free-form tags, as before.
+   */
+  private async loadTagVocabulary(): Promise<{ tags: Set<string>; aliases: Map<string, string> }> {
+    const tags = new Set<string>();
+    const aliases = new Map<string, string>();
+    const path = (this.settings.tagVocabularyPath ?? "").trim();
+    if (!path) {
+      return { tags, aliases };
+    }
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) {
+      return { tags, aliases };
+    }
+    const text = await this.app.vault.cachedRead(file);
+    const body = text.replace(/^---\n[\s\S]*?\n---\n/, "");
+    const split = body.search(/^##\s+Aliases/m);
+    const main = split === -1 ? body : body.slice(0, split);
+    const aliasPart = split === -1 ? "" : body.slice(split);
+    for (const match of main.matchAll(/`([a-z0-9][a-z0-9-]*)`/g)) {
+      tags.add(match[1]);
+    }
+    for (const match of aliasPart.matchAll(/`([^`]+)`\s*→\s*`([a-z0-9-]+)`/g)) {
+      aliases.set(match[1].toLowerCase(), match[2]);
+    }
+    return { tags, aliases };
+  }
+
+  private buildTitleTagsPrompt(summary: string, vocabulary: Set<string>): string {
+    const tagRule =
+      vocabulary.size > 0
+        ? "tags: 2 to 4 lowercase topic tags chosen ONLY from this controlled list (pick the most specific that fit; never invent new ones): " +
+          [...vocabulary].join(", ") +
+          "."
+        : "tags: 2 to 4 short lowercase topic tags, single words or hyphenated, with no leading number sign.";
     return [
       "From the article summary below, produce a note title and topic tags.",
       "Return ONLY a compact JSON object and nothing else (no code fences, no commentary):",
       '{"title": "...", "tags": ["...", "..."]}',
       "title: a concise, specific Title Case name for the note — the actual subject (product, tool, or article), 3 to 80 characters, no line breaks, and without any of these characters: \\ / : * ? \" < > | # ^ [ ].",
-      "tags: 2 to 4 short lowercase topic tags, single words or hyphenated, with no leading number sign.",
+      tagRule,
       "",
       `Summary: ${summary}`
     ].join("\n");
   }
 
   private async requestTitleAndTags(summary: string): Promise<{ title: string; tags: string[] }> {
-    const raw = await this.runProviderCompletion(this.buildTitleTagsPrompt(summary));
+    const vocabulary = await this.loadTagVocabulary();
+    const raw = await this.runProviderCompletion(this.buildTitleTagsPrompt(summary, vocabulary.tags));
     const match = raw.match(/\{[\s\S]*\}/);
     if (!match) {
       throw new Error(EMPTY_SUMMARY_ERROR);
@@ -971,7 +1010,9 @@ export default class GeminiLinkSummarizerPlugin extends Plugin {
       ? parsed.tags
           .filter((tag): tag is string => typeof tag === "string")
           .map((tag) => tag.trim().toLowerCase().replace(/^#/, ""))
-          .filter((tag) => tag.length > 0)
+          .map((tag) => vocabulary.aliases.get(tag) ?? tag)
+          .filter((tag) => tag.length > 0 && (vocabulary.tags.size === 0 || vocabulary.tags.has(tag)))
+          .filter((tag, index, all) => all.indexOf(tag) === index)
           .slice(0, 4)
       : [];
     return { title, tags };
@@ -1614,6 +1655,22 @@ class GeminiLinkSummarizerSettingTab extends PluginSettingTab {
           this.plugin.settings.batchTitleAndTags = value;
           await this.plugin.saveSettings();
         })
+      );
+
+    new Setting(containerEl)
+      .setName("Tag vocabulary note")
+      .setDesc(
+        "Vault path of a note listing the allowed tags as `code` spans (aliases under an \"## Aliases\" heading as " +
+          "`alias` → `tag`). Generated tags are restricted to this list. Leave empty for free-form tags."
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder("Wiki/Tag Vocabulary.md")
+          .setValue(this.plugin.settings.tagVocabularyPath)
+          .onChange(async (value) => {
+            this.plugin.settings.tagVocabularyPath = value.trim();
+            await this.plugin.saveSettings();
+          })
       );
 
     this.addSectionHeading(containerEl, "Inbox auto-ingest");
